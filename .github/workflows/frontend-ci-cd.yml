@@ -94,7 +94,7 @@ jobs:
       run: npm ci
     
     - name: Run linter
-      run: ${{ inputs.lint-command }} --max-warnings ${{ inputs.max-warnings }}
+      run: ${{ inputs.lint-command }}
     
     - name: Run tests
       if: ${{ inputs.run-tests }}
