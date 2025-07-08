@@ -115,7 +115,7 @@ jobs:
       with:
         registry: ${{ inputs.docker-registry }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+        password: ${{ github.token }}
     
     - name: Extract metadata for Docker
       if: ${{ inputs.docker-enabled }}
