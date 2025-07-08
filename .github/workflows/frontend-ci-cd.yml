@@ -48,9 +48,6 @@ on:
         type: number
         default: 600
     secrets:
-      GITHUB_TOKEN:
-        description: 'GitHub token for authentication'
-        required: true
       NPM_TOKEN:
         description: 'NPM token for private packages'
         required: false
