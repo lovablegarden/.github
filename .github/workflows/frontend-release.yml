@@ -50,6 +50,10 @@ on:
         description: 'Maximum number of ESLint warnings allowed'
         required: false
         type: number
+      docker-image-name:
+        description: 'Custom Docker image name (defaults to github.repository)'
+        required: false
+        type: string
         default: 600
     secrets:
       NPM_TOKEN:
@@ -125,7 +129,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ inputs.docker-registry }}/${{ github.repository }}
+        images: ${{ inputs.docker-registry }}/${{ inputs.docker-image-name || github.repository }}
         tags: |
           type=raw,value=${{ inputs.version }}
           type=raw,value=latest,enable=${{ !inputs.prerelease }}

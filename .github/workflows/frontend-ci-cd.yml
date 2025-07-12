@@ -47,6 +47,10 @@ on:
         required: false
         type: number
         default: 600
+      docker-image-name:
+        description: 'Custom Docker image name (defaults to github.repository)'
+        required: false
+        type: string
     secrets:
       NPM_TOKEN:
         description: 'NPM token for private packages'
@@ -155,7 +159,7 @@ jobs:
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: ${{ inputs.docker-registry }}/${{ github.repository }}
+        images: ${{ inputs.docker-registry }}/${{ inputs.docker-image-name || github.repository }}
         tags: |
           type=raw,value=${{ steps.version.outputs.version }}
           type=raw,value=latest,enable={{is_default_branch}}
