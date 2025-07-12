@@ -55,6 +55,9 @@ on:
       NPM_TOKEN:
         description: 'NPM token for private packages'
         required: false
+      GHCR_TOKEN:
+        description: 'GitHub Container Registry token'
+        required: false
     outputs:
       release-url:
         description: 'URL of the created release'
@@ -115,7 +118,7 @@ jobs:
       with:
         registry: ${{ inputs.docker-registry }}
         username: ${{ github.actor }}
-        password: ${{ github.token }}
+        password: ${{ secrets.GHCR_TOKEN || github.token }}
     
     - name: Extract metadata for Docker
       if: ${{ inputs.docker-enabled }}

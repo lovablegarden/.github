@@ -51,6 +51,9 @@ on:
       NPM_TOKEN:
         description: 'NPM token for private packages'
         required: false
+      GHCR_TOKEN:
+        description: 'GitHub Container Registry token'
+        required: false
     outputs:
       build-success:
         description: 'Whether the build was successful'
@@ -146,7 +149,7 @@ jobs:
       with:
         registry: ${{ inputs.docker-registry }}
         username: ${{ github.actor }}
-        password: ${{ github.token }}
+        password: ${{ secrets.GHCR_TOKEN || github.token }}
     
     - name: Extract metadata
       id: meta
