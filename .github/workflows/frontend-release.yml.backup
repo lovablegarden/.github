@@ -1,0 +1,155 @@
+name: Frontend Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20.x'
+      lint-command:
+        description: 'Command to run linting'
+        required: false
+        type: string
+        default: 'npm run lint:ci'
+      build-command:
+        description: 'Command to build the project'
+        required: false
+        type: string
+        default: 'npm run build'
+      docker-registry:
+        description: 'Docker registry to publish to'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      project-name:
+        description: 'Name of the project for Docker image'
+        required: true
+        type: string
+      docker-enabled:
+        description: 'Whether to build and publish Docker images'
+        required: false
+        type: boolean
+        default: true
+      create-archives:
+        description: 'Whether to create archive files'
+        required: false
+        type: boolean
+        default: true
+      max-warnings:
+        description: 'Maximum number of ESLint warnings allowed'
+        required: false
+        type: number
+        default: 600
+    secrets:
+      NPM_TOKEN:
+        description: 'NPM token for private packages'
+        required: false
+    outputs:
+      release-url:
+        description: 'URL of the created release'
+        value: ${{ jobs.release.outputs.release-url }}
+      docker-image-tag:
+        description: 'Docker image tag that was built'
+        value: ${{ jobs.release.outputs.docker-image-tag }}
+      next-snapshot:
+        description: 'Next snapshot version'
+        value: ${{ jobs.release.outputs.next-snapshot }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    outputs:
+      release-url: ${{ steps.create_release.outputs.html_url }}
+      docker-image-tag: ${{ inputs.version }}
+      next-snapshot: ${{ steps.next_version.outputs.next_snapshot }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Use Node.js ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+        registry-url: 'https://registry.npmjs.org'
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run linter
+      run: ${{ inputs.lint-command }} --max-warnings ${{ inputs.max-warnings }}
+    
+    - name: Build project
+      run: ${{ inputs.build-command }}
+    
+    - name: Update package.json version
+      run: |
+        npm version ${{ inputs.version }} --no-git-tag-version
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add package.json package-lock.json
+        git commit -m "chore: bump version to ${{ inputs.version }}"
+    
+    - name: Set up Docker Buildx
+      if: ${{ inputs.docker-enabled }}
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      if: ${{ inputs.docker-enabled }}
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.docker-registry }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    
+    - name: Extract metadata for Docker
+      if: ${{ inputs.docker-enabled }}
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.docker-registry }}/${{ github.repository }}
+        tags: |
+          type=raw,value=${{ inputs.version }}
+          type=raw,value=latest,enable=${{ !inputs.prerelease }}
+        labels: |
+          org.opencontainers.image.title=${{ inputs.project-name }}
+          org.opencontainers.image.description=Frontend application for ${{ inputs.project-name }}
+          org.opencontainers.image.version=${{ inputs.version }}
+    
+    - name: Build and push Docker image
+      if: ${{ inputs.docker-enabled }}
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+    
+    - name: Create archive files
+      if: ${{ inputs.create-archives }}
+      run: |
+        tar -czf ${{ inputs.project-name }}-${{ inputs.version }}.tar.gz dist/
+        zip -r ${{ inputs.project-name }}-${{ inputs.version }}.zip dist/
+    
+    - name: Create Release
+      uses: actions/create-release@v1
+      id: create_release
+      env:

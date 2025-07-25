@@ -1,0 +1,207 @@
+name: Frontend CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20.x'
+      lint-command:
+        description: 'Command to run linting'
+        required: false
+        type: string
+        default: 'npm run lint:ci'
+      build-command:
+        description: 'Command to build the project'
+        required: false
+        type: string
+        default: 'npm run build'
+      test-command:
+        description: 'Command to run tests'
+        required: false
+        type: string
+        default: 'npm test'
+      docker-registry:
+        description: 'Docker registry to publish to'
+        required: false
+        type: string
+        default: 'ghcr.io'
+      project-name:
+        description: 'Name of the project for Docker image'
+        required: true
+        type: string
+      docker-enabled:
+        description: 'Whether to build and publish Docker images'
+        required: false
+        type: boolean
+        default: true
+      run-tests:
+        description: 'Whether to run tests'
+        required: false
+        type: boolean
+        default: false
+      max-warnings:
+        description: 'Maximum number of ESLint warnings allowed'
+        required: false
+        type: number
+        default: 600
+    secrets:
+      NPM_TOKEN:
+        description: 'NPM token for private packages'
+        required: false
+    outputs:
+      build-success:
+        description: 'Whether the build was successful'
+        value: ${{ jobs.build.outputs.build-success }}
+      docker-image-tag:
+        description: 'Docker image tag that was built'
+        value: ${{ jobs.docker.outputs.image-tag }}
+      version:
+        description: 'Version from package.json'
+        value: ${{ jobs.build.outputs.version }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    outputs:
+      build-success: ${{ steps.build.outcome == 'success' }}
+      version: ${{ steps.version.outputs.version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Extract version from package.json
+      id: version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version: $VERSION"
+    
+    - name: Use Node.js ${{ inputs.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+        registry-url: 'https://registry.npmjs.org'
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run linter
+      run: ${{ inputs.lint-command }}
+    
+    - name: Run tests
+      if: ${{ inputs.run-tests }}
+      run: ${{ inputs.test-command }}
+    
+    - name: Build project
+      id: build
+      run: ${{ inputs.build-command }}
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts-${{ github.run_id }}
+        path: dist/
+        retention-days: 7
+    
+    - name: Upload production build
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-build-${{ github.run_id }}
+        path: dist/
+        retention-days: 30
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ inputs.docker-enabled && github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+    
+    outputs:
+      image-tag: ${{ steps.version.outputs.version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Extract version from package.json
+      id: version
+      run: |
+        VERSION=$(node -p "require('./package.json').version")
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📦 Version: $VERSION"
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.docker-registry }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ inputs.docker-registry }}/${{ github.repository }}
+        tags: |
+          type=raw,value=${{ steps.version.outputs.version }}
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=sha,prefix={{branch}}-
+        labels: |
+          org.opencontainers.image.title=${{ inputs.project-name }}
+          org.opencontainers.image.description=Frontend application for ${{ inputs.project-name }}
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64,linux/arm64
+    
+    - name: Docker Success
+      run: |
+        echo "✅ Docker image published successfully!"
+        echo "📦 Image: ${{ inputs.docker-registry }}/${{ github.repository }}:${{ steps.version.outputs.version }}"
+        echo "🏷️  Tags: ${{ steps.meta.outputs.tags }}"
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [build, docker]
+    if: always()
+    
+    steps:
+    - name: Build Summary
+      run: |
+        echo "## 🚀 Frontend CI/CD Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Build | ${{ needs.build.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ inputs.docker-enabled }}" == "true" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "| Docker | ${{ needs.docker.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Docker | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ needs.build.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Project:** ${{ inputs.project-name }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ needs.docker.result }}" == "success" ]]; then
+          echo "**Docker Image:** \`${{ inputs.docker-registry }}/${{ github.repository }}:${{ needs.build.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+        fi 

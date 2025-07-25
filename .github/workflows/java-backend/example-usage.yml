@@ -1,0 +1,14 @@
+# Example: How to use the workflow templates in your Java backend project
+# Copy this file to .github/workflows/ci.yml in your project
+
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  ci:
+    uses: ./.github/workflow-templates/ci.yml 
