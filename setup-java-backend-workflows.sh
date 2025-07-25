@@ -36,7 +36,7 @@ on:
 
 jobs:
   ci:
-    uses: gardentalkz/.github/.github/workflows/java-backend/ci.yml@main
+    uses: gardentalkz/.github/.github/workflow-templates/java-21-gradle-ci.yml@main
 EOF
 
 # Create Release workflow
@@ -55,7 +55,7 @@ on:
 
 jobs:
   release:
-    uses: gardentalkz/.github/.github/workflows/java-backend/release.yml@main
+    uses: gardentalkz/.github/.github/workflow-templates/java-21-gradle-release.yml@main
     with:
       version: ${{ github.event.inputs.version }}
     secrets:
