@@ -34,9 +34,15 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   ci:
     uses: gardentalkz/.github/.github/workflows/java-21-gradle-ci.yml@main
+    secrets:
+      GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 EOF
 
 # Create Release workflow
@@ -53,6 +59,10 @@ on:
         default: '1.0.0'
         type: string
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   release:
     uses: gardentalkz/.github/.github/workflows/java-21-gradle-release.yml@main
@@ -60,6 +70,7 @@ jobs:
       version: ${{ github.event.inputs.version }}
     secrets:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
 EOF
 
 echo "✅ Java backend workflow templates have been set up in $TARGET_REPO"
@@ -70,7 +81,8 @@ echo "2. Ensure your project has:"
 echo "   - Gradle wrapper (gradlew, gradlew.bat)"
 echo "   - Dockerfile in the root directory"
 echo "   - build.gradle with proper version configuration"
-echo "3. Configure any necessary GitHub secrets"
+echo "3. Configure any necessary GitHub secrets:"
+echo "   - GH_PACKAGES_TOKEN (for GitHub Packages access)"
 echo "4. Commit and push the changes"
 echo ""
 echo "The workflows will automatically:"

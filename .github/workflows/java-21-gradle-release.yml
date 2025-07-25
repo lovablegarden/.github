@@ -10,6 +10,9 @@ on:
     secrets:
       GITHUB_TOKEN:
         required: true
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages token for accessing private packages'
+        required: false
 
 permissions:
   contents: write

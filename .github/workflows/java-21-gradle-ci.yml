@@ -2,6 +2,10 @@ name: CI Template
 
 on:
   workflow_call:
+    secrets:
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages token for accessing private packages'
+        required: false
 
 permissions:
   contents: read
