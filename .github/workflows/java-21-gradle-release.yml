@@ -10,9 +10,13 @@ on:
     secrets:
       GITHUB_TOKEN:
         required: true
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub Packages token for accessing private packages'
+        required: false
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   release:
@@ -23,34 +27,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Checkout OpenAPI spec
-        uses: actions/checkout@v4
-        with:
-          repository: gardentalkz/gardentalkz-openapi-spec
-          path: openapi-spec
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: openapi-spec/package-lock.json
-
-      - name: Install OpenAPI Generator dependencies
-        working-directory: openapi-spec
-        run: npm ci
-
-      - name: Generate OpenAPI artifacts
-        working-directory: openapi-spec
-        run: npm run generate:backend
-
-      - name: Install generated auth dependency
-        working-directory: openapi-spec/generated/backend/auth
-        run: |
-          chmod +x ./gradlew
-          ./gradlew publishToMavenLocal
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -66,6 +42,8 @@ jobs:
       - name: Build with Gradle
         env:
           CI: true
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: ./gradlew clean build --no-daemon
 
       - name: Create Git tag
