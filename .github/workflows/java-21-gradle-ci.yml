@@ -33,20 +33,20 @@ jobs:
       - name: Debug GitHub Packages access
         env:
           GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: |
           echo "=== GitHub Environment Debug ==="
           echo "GitHub Actor: $GITHUB_ACTOR"
-          echo "GitHub Token: ${GITHUB_TOKEN:0:10}..."
+          echo "GitHub Token: ${GH_PACKAGE_TOKEN:0:10}..."
           echo "Repository: ${{ github.repository }}"
           echo ""
           echo "=== Testing GitHub Packages Access ==="
-          curl -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" \
+          curl -H "Authorization: token $GH_PACKAGE_TOKEN" -H "Accept: application/vnd.github.v3+json" \
                "https://api.github.com/orgs/gardentalkz/packages/maven/se.gardentalkz.api.gardentalkz-api-auth/versions" \
                || echo "Failed to access package versions"
           echo ""
           echo "=== Testing Maven Repository Access ==="
-          curl -H "Authorization: token $GITHUB_TOKEN" \
+          curl -H "Authorization: token $GH_PACKAGE_TOKEN" \
                "https://maven.pkg.github.com/gardentalkz/gardentalkz-openapi-spec/se/gardentalkz/api/gardentalkz-api-auth/1.0.0/gardentalkz-api-auth-1.0.0.pom" \
                || echo "Failed to access Maven artifact"
 
@@ -54,7 +54,7 @@ jobs:
         env:
           CI: true
           GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: ./gradlew build --no-daemon --stacktrace
 
   test:
@@ -80,7 +80,7 @@ jobs:
         env:
           CI: true
           GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: ./gradlew test --no-daemon --stacktrace
 
       - name: Upload test results
@@ -117,7 +117,7 @@ jobs:
         env:
           CI: true
           GITHUB_ACTOR: ${{ github.actor }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: ./gradlew build --no-daemon --stacktrace
 
       - name: Set up Docker Buildx
@@ -128,7 +128,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
 
       - name: Extract metadata
         id: meta
@@ -152,4 +152,4 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
-            GITHUB_TOKEN=${{ secrets.GH_PACKAGES_TOKEN || github.token }} 
+            GH_PACKAGE_TOKEN=${{ secrets.GH_PACKAGES_TOKEN || github.token }} 
