@@ -109,6 +109,12 @@ jobs:
           distribution: 'temurin'
 
       - name: Setup Gradle
+      - name: Build with Gradle
+        env:
+          CI: true
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew build --no-daemon --stacktrace
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: wrapper
@@ -133,11 +139,11 @@ jobs:
             type=raw,value=latest
             type=sha,prefix={{branch}}-
 
-      - name: Build and push multi-platform Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
