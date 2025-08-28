@@ -56,11 +56,11 @@ on:
         type: string
         default: 600
     secrets:
+      GH_PACKAGES_TOKEN:
+        description: 'GitHub token for authentication'
+        required: true
       NPM_TOKEN:
         description: 'NPM token for private packages'
-        required: false
-      GHCR_TOKEN:
-        description: 'GitHub Container Registry token'
         required: false
     outputs:
       release-url:
@@ -96,9 +96,7 @@ jobs:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     
     - name: Install dependencies
-      run: |
-        rm -rf node_modules package-lock.json
-        npm install
+      run: npm ci
     
     - name: Run linter
       run: ${{ inputs.lint-command }} --max-warnings ${{ inputs.max-warnings }}
@@ -162,3 +160,117 @@ jobs:
       uses: actions/create-release@v1
       id: create_release
       env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ inputs.version }}
+        release_name: Release v${{ inputs.version }}
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+        body: |
+          ## Release v${{ inputs.version }}
+          
+          ### Changes
+          - Built from commit: ${{ github.sha }}
+          - Build date: ${{ github.event.created_at }}
+          - Project: ${{ inputs.project-name }}
+          
+          ${{ inputs.docker-enabled && format('### Docker Image
+          ```bash
+          docker pull {0}/{1}:{2}
+          ```
+          
+          ', inputs.docker-registry, github.repository, inputs.version) || '' }}${{ inputs.create-archives && format('### Assets
+          - `{0}-{1}.tar.gz` - Production build (tar.gz)
+          - `{0}-{1}.zip` - Production build (zip)', inputs.project-name, inputs.version) || '' }}
+    
+    - name: Upload Release Asset (tar.gz)
+      if: ${{ inputs.create-archives }}
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./${{ inputs.project-name }}-${{ inputs.version }}.tar.gz
+        asset_name: ${{ inputs.project-name }}-${{ inputs.version }}.tar.gz
+        asset_content_type: application/gzip
+    
+    - name: Upload Release Asset (zip)
+      if: ${{ inputs.create-archives }}
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./${{ inputs.project-name }}-${{ inputs.version }}.zip
+        asset_name: ${{ inputs.project-name }}-${{ inputs.version }}.zip
+        asset_content_type: application/zip
+    
+    - name: Push version changes
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: ${{ github.ref }}
+        tags: true
+    
+    - name: Calculate next snapshot version
+      id: next_version
+      run: |
+        CURRENT_VERSION="${{ inputs.version }}"
+        # Extract major, minor, patch from current version (e.g., 1.0.0 -> 1, 0, 0)
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        
+        # Increment patch version for next snapshot
+        NEXT_PATCH=$((PATCH + 1))
+        NEXT_SNAPSHOT="${MAJOR}.${MINOR}.${NEXT_PATCH}-SNAPSHOT"
+        
+        echo "next_snapshot=$NEXT_SNAPSHOT" >> $GITHUB_OUTPUT
+        echo "Next snapshot version will be: $NEXT_SNAPSHOT"
+    
+    - name: Update to next snapshot version
+      run: |
+        npm version ${{ steps.next_version.outputs.next_snapshot }} --no-git-tag-version
+        git add package.json package-lock.json
+        git commit -m "chore: prepare for next development iteration ${{ steps.next_version.outputs.next_snapshot }}"
+    
+    - name: Push snapshot version
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: ${{ github.ref }}
+    
+    - name: Create Release Summary
+      run: |
+        echo "## 🚀 Frontend Release Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Release | ✅ v${{ inputs.version }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Prerelease | ${{ inputs.prerelease && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ inputs.docker-enabled }}" == "true" ]]; then
+          echo "| Docker Image | ✅ Published |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Docker Image | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [[ "${{ inputs.create-archives }}" == "true" ]]; then
+          echo "| Archives | ✅ Created |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| Archives | ⏭️ Skipped |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Project:** ${{ inputs.project-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Next Snapshot:** ${{ steps.next_version.outputs.next_snapshot }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Release URL:** ${{ steps.create_release.outputs.html_url }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ inputs.docker-enabled }}" == "true" ]]; then
+          echo "**Docker Image:** \`${{ inputs.docker-registry }}/${{ github.repository }}:${{ inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Release Success
+      run: |
+        echo "✅ Release v${{ inputs.version }} created successfully!"
+        echo "🐳 Docker image: ${{ inputs.docker-registry }}/${{ github.repository }}:${{ inputs.version }}"
+        echo "🚀 Project updated to next snapshot version: ${{ steps.next_version.outputs.next_snapshot }}"
+        echo "🔗 Release URL: ${{ steps.create_release.outputs.html_url }}" 
