@@ -24,13 +24,12 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: wrapper
-          cache-read-only: false
+          cache-disabled: true
 
       - name: Debug GitHub Packages access
         env:
@@ -72,13 +71,12 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: wrapper
-          cache-read-only: false
+          cache-disabled: true
 
       - name: Run tests
         env:
@@ -111,13 +109,12 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
-          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: wrapper
-          cache-read-only: false
+          cache-disabled: true
 
       - name: Build with Gradle
         env:
