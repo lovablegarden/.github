@@ -24,11 +24,13 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: '8.11'
+          cache-read-only: false
 
       - name: Debug GitHub Packages access
         env:
@@ -70,11 +72,13 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: '8.11'
+          cache-read-only: false
 
       - name: Run tests
         env:
@@ -107,11 +111,13 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
         with:
           gradle-version: '8.11'
+          cache-read-only: false
 
       - name: Build with Gradle
         env:
