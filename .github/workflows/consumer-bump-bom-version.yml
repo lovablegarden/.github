@@ -1,0 +1,51 @@
+name: Bump lovablegardenBomVersion in consumers
+
+on:
+  workflow_call:
+    inputs:
+      bom_version:
+        description: 'Released BOM/security-common version (with or without v prefix)'
+        required: true
+        type: string
+    secrets:
+      LOVABLEGARDEN_BOT_PAT:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - lovablegarden-plants
+          - lovablegarden-gardendesk
+    steps:
+      - name: Checkout consumer
+        uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/${{ matrix.repo }}
+          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          path: consumer
+
+      - name: Update lovablegardenBomVersion
+        working-directory: consumer
+        run: |
+          VERSION="${{ inputs.bom_version }}"
+          VERSION="${VERSION#v}"
+          sed -i.bak "s/^lovablegardenBomVersion=.*/lovablegardenBomVersion=${VERSION}/" gradle.properties
+          rm -f gradle.properties.bak
+          git diff -- gradle.properties
+
+      - name: Open PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          path: consumer
+          branch: bump/bom-${{ inputs.bom_version }}-${{ matrix.repo }}
+          title: "chore: bump lovablegardenBomVersion to ${{ inputs.bom_version }}"
+          body: |
+            Automated bump after `lovablegarden-security-common` / BOM release `${{ inputs.bom_version }}`.
+          commit-message: "chore: bump lovablegardenBomVersion to ${{ inputs.bom_version }}"

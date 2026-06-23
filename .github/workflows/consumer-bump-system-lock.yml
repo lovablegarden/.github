@@ -1,0 +1,59 @@
+name: Bump system lock file
+
+on:
+  workflow_call:
+    inputs:
+      service_key:
+        description: 'Lock file service key (e.g. lovablegarden-plants)'
+        required: true
+        type: string
+      service_version:
+        description: 'Semver without v prefix'
+        required: true
+        type: string
+    secrets:
+      LOVABLEGARDEN_BOT_PAT:
+        description: 'PAT with contents:write on lovablegarden-system (and PR creation)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout lovablegarden-system
+        uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/lovablegarden-system
+          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          path: system
+
+      - name: Update versions/services.lock.yml
+        working-directory: system
+        run: |
+          LOCK="versions/services.lock.yml"
+          KEY="${{ inputs.service_key }}"
+          VERSION="${{ inputs.service_version }}"
+          VERSION="${VERSION#v}"
+          if ! grep -q "^  ${KEY}:" "$LOCK"; then
+            echo "Service key not found in lock file: ${KEY}"
+            exit 1
+          fi
+          sed -i.bak "s|^  ${KEY}:.*|  ${KEY}: ${VERSION}|" "$LOCK"
+          rm -f "${LOCK}.bak"
+          git diff -- "$LOCK"
+
+      - name: Open PR in lovablegarden-system
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          path: system
+          branch: bump/${{ inputs.service_key }}-${{ inputs.service_version }}
+          title: "chore: bump ${{ inputs.service_key }} to ${{ inputs.service_version }}"
+          body: |
+            Automated lock file bump after `${{ inputs.service_key }}` release `${{ inputs.service_version }}`.
+
+            Merge and rebuild `lovablegarden-system` to deploy this version.
+          commit-message: "chore: bump ${{ inputs.service_key }} to ${{ inputs.service_version }}"

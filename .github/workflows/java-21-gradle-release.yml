@@ -117,14 +117,19 @@ jobs:
           
           echo "Next version: $NEXT_VERSION"
           
-          # Update build.gradle
-          sed -i "s/version = '.*'/version = '$NEXT_VERSION'/" build.gradle
+          # Update gradle.properties (single source of truth for version)
+          if [ -f gradle.properties ] && grep -q '^version=' gradle.properties; then
+            sed -i "s/^version=.*/version=${NEXT_VERSION}/" gradle.properties
+            git add gradle.properties
+          elif [ -f build.gradle ]; then
+            sed -i "s/version = '.*'/version = '${NEXT_VERSION}'/" build.gradle
+            git add build.gradle
+          fi
           
           # Commit and push changes
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add build.gradle
-          git commit -m "Bump version to $NEXT_VERSION for next development iteration"
+          git commit -m "Bump version to $NEXT_VERSION for next development iteration" || echo "No version file changes to commit"
           git push origin ${{ github.ref }}
 
       - name: Output next version
