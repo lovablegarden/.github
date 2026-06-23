@@ -30,20 +30,21 @@ jobs:
           token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
           path: system
 
-      - name: Update versions/services.lock.yml
+      - name: Update production lock files
         working-directory: system
         run: |
-          LOCK="versions/services.lock.yml"
           KEY="${{ inputs.service_key }}"
           VERSION="${{ inputs.service_version }}"
           VERSION="${VERSION#v}"
-          if ! grep -q "^  ${KEY}:" "$LOCK"; then
-            echo "Service key not found in lock file: ${KEY}"
-            exit 1
-          fi
-          sed -i.bak "s|^  ${KEY}:.*|  ${KEY}: ${VERSION}|" "$LOCK"
-          rm -f "${LOCK}.bak"
-          git diff -- "$LOCK"
+          for LOCK in versions/services.lock.prod.yml versions/services.lock.yml; do
+            if ! grep -q "^  ${KEY}:" "$LOCK"; then
+              echo "Service key not found in ${LOCK}: ${KEY}"
+              exit 1
+            fi
+            sed -i.bak "s|^  ${KEY}:.*|  ${KEY}: ${VERSION}|" "$LOCK"
+            rm -f "${LOCK}.bak"
+          done
+          git diff -- versions/
 
       - name: Open PR in lovablegarden-system
         uses: peter-evans/create-pull-request@v6
