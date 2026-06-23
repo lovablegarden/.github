@@ -13,6 +13,10 @@ on:
         required: false
         default: .github/.release-please-manifest.json
         type: string
+    secrets:
+      RELEASE_PLEASE_TOKEN:
+        description: 'Token with permission to create release PRs (defaults to GITHUB_TOKEN)'
+        required: false
 
 permissions:
   contents: write
@@ -24,6 +28,6 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: ${{ inputs.config-file }}
           manifest-file: ${{ inputs.manifest-file }}

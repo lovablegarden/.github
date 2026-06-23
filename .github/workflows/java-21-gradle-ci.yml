@@ -51,10 +51,33 @@ jobs:
                "https://maven.pkg.github.com/gardentalkz/gardentalkz-openapi-spec/se/gardentalkz/api/gardentalkz-api-auth/1.0.0/gardentalkz-api-auth-1.0.0.pom" \
                || echo "Failed to access Maven artifact"
   
+      - name: Wait for lovablegarden-bom (if configured)
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          if [ ! -f gradle.properties ] || ! grep -q '^lovablegardenBomVersion=' gradle.properties; then
+            echo "No lovablegardenBomVersion in gradle.properties — skipping BOM wait"
+            exit 0
+          fi
+          BOM_VERSION=$(grep '^lovablegardenBomVersion=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')
+          POM_URL="https://maven.pkg.github.com/lovablegarden/lovablegarden-security-common/com/lovablegarden/lovablegarden-bom/${BOM_VERSION}/lovablegarden-bom-${BOM_VERSION}.pom"
+          for attempt in $(seq 1 36); do
+            if curl -fsSL -u "${GITHUB_ACTOR}:${GH_PACKAGE_TOKEN}" "$POM_URL" >/dev/null 2>&1; then
+              echo "lovablegarden-bom ${BOM_VERSION} is available"
+              exit 0
+            fi
+            echo "Waiting for lovablegarden-bom ${BOM_VERSION} (attempt ${attempt}/36)..."
+            sleep 10
+          done
+          echo "Timed out waiting for lovablegarden-bom ${BOM_VERSION}"
+          exit 1
+
       - name: Build with Gradle
         env:
           CI: true
           GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
           GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: ./gradlew build --no-daemon --stacktrace
 
