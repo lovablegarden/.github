@@ -7,6 +7,11 @@ on:
         description: 'Released BOM/security-common version (with or without v prefix)'
         required: true
         type: string
+    secrets:
+      LOVABLEGARDEN_BOT_APP_ID:
+        required: true
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: true
 
 permissions:
   contents: write
