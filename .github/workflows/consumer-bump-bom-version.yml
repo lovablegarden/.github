@@ -8,10 +8,10 @@ on:
         required: true
         type: string
     secrets:
-      LOVABLEGARDEN_BOT_APP_ID:
-        required: true
       LOVABLEGARDEN_BOT_PRIVATE_KEY:
         required: true
+      LOVABLEGARDEN_BOT_APP_ID:
+        required: false
 
 permissions:
   contents: write
@@ -30,7 +30,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
 
