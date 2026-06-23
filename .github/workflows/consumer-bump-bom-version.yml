@@ -7,12 +7,10 @@ on:
         description: 'Released BOM/security-common version (with or without v prefix)'
         required: true
         type: string
-    secrets:
-      LOVABLEGARDEN_BOT_PAT:
-        required: true
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
   bump:
@@ -23,11 +21,19 @@ jobs:
           - lovablegarden-plants
           - lovablegarden-gardendesk
     steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
       - name: Checkout consumer
         uses: actions/checkout@v4
         with:
           repository: lovablegarden/${{ matrix.repo }}
-          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           path: consumer
 
       - name: Update lovablegardenBomVersion
@@ -42,7 +48,7 @@ jobs:
       - name: Open PR
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.LOVABLEGARDEN_BOT_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
           path: consumer
           branch: bump/bom-${{ inputs.bom_version }}-${{ matrix.repo }}
           title: "chore: bump lovablegardenBomVersion to ${{ inputs.bom_version }}"
