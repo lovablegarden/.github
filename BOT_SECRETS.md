@@ -21,6 +21,9 @@ Install the App on:
 - `lovablegarden-plants`
 - `lovablegarden-gardendesk`
 - `lovablegarden-security-common`
+- `lovablegarden-tasks`
+
+The org installation (`lovablegarden-bot`) is configured for **all repositories**; new service repos are covered automatically once release-please is wired.
 
 **Repository permissions:** Contents Read & write, Pull requests Read & write.
 
