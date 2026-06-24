@@ -44,8 +44,13 @@ jobs:
         working-directory: system
         run: |
           KEY="${{ inputs.service_key }}"
-          VERSION="${{ inputs.service_version }}"
-          VERSION="${VERSION#v}"
+          RAW="${{ inputs.service_version }}"
+          VERSION=$(echo "$RAW" | sed 's/^v//' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' | tail -1)
+          if [ -z "$VERSION" ]; then
+            echo "Could not parse semver from tag: $RAW"
+            exit 1
+          fi
+          echo "Lock bump: ${KEY} -> ${VERSION} (from ${RAW})"
           for LOCK in versions/services.lock.prod.yml versions/services.lock.yml; do
             if ! grep -q "^  ${KEY}:" "$LOCK"; then
               echo "Service key not found in ${LOCK}: ${KEY}"

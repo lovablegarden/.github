@@ -44,8 +44,13 @@ jobs:
       - name: Update lovablegardenBomVersion
         working-directory: consumer
         run: |
-          VERSION="${{ inputs.bom_version }}"
-          VERSION="${VERSION#v}"
+          RAW="${{ inputs.bom_version }}"
+          VERSION=$(echo "$RAW" | sed 's/^v//' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' | tail -1)
+          if [ -z "$VERSION" ]; then
+            echo "Could not parse semver from: $RAW"
+            exit 1
+          fi
+          echo "BOM bump -> ${VERSION} (from ${RAW})"
           sed -i.bak "s/^lovablegardenBomVersion=.*/lovablegardenBomVersion=${VERSION}/" gradle.properties
           rm -f gradle.properties.bak
           git diff -- gradle.properties
