@@ -22,6 +22,7 @@ Install the App on:
 - `lovablegarden-gardendesk`
 - `lovablegarden-security-common`
 - `lovablegarden-tasks`
+- `lovablegarden-audit`
 
 The org installation (`lovablegarden-bot`) is configured for **all repositories**; new service repos are covered automatically once release-please is wired.
 
