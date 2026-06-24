@@ -33,4 +33,12 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
-        run: ./gradlew publish --no-daemon --build-cache
+        run: |
+          set +e
+          ./gradlew publish --no-daemon --build-cache 2>&1 | tee publish.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ] && grep -q "status code 409" publish.log; then
+            echo "Maven artifact already published (main CI) — treating as success."
+            exit 0
+          fi
+          exit "$code"
