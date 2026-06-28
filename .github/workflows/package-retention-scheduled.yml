@@ -1,0 +1,89 @@
+name: Package retention (scheduled)
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Log deletions without executing'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+jobs:
+  load-manifest:
+    runs-on: ubuntu-latest
+    outputs:
+      ghcr_packages: ${{ steps.parse.outputs.ghcr_packages }}
+      maven_packages: ${{ steps.parse.outputs.maven_packages }}
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
+      - name: Checkout package manifest
+        uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/lovablegarden-system
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: system
+          sparse-checkout: |
+            versions/package-retention.yml
+
+      - name: Parse manifest
+        id: parse
+        run: |
+          pip install --quiet pyyaml
+          python3 <<'PY'
+          import json, yaml
+          from pathlib import Path
+          data = yaml.safe_load(Path("system/versions/package-retention.yml").read_text())
+          ghcr = data.get("ghcr", [])
+          maven = data.get("maven", [])
+          with open("$GITHUB_OUTPUT", "a") as out:
+              out.write(f"ghcr_packages={json.dumps(ghcr)}\n")
+              out.write(f"maven_packages={json.dumps(maven)}\n")
+          print(f"GHCR packages: {len(ghcr)}")
+          print(f"Maven packages: {len(maven)}")
+          PY
+
+  prune-ghcr:
+    needs: [load-manifest]
+    if: needs.load-manifest.outputs.ghcr_packages != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        image_name: ${{ fromJson(needs.load-manifest.outputs.ghcr_packages) }}
+    uses: lovablegarden/.github/.github/workflows/prune-ghcr-package.yml@main
+    with:
+      image_name: ${{ matrix.image_name }}
+      dry_run: true
+    secrets:
+      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+
+  prune-maven:
+    needs: [load-manifest]
+    if: needs.load-manifest.outputs.maven_packages != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        package_name: ${{ fromJson(needs.load-manifest.outputs.maven_packages) }}
+    uses: lovablegarden/.github/.github/workflows/prune-maven-package.yml@main
+    with:
+      package_name: ${{ matrix.package_name }}
+      dry_run: true
+    secrets:
+      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
