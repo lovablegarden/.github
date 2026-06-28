@@ -47,12 +47,12 @@ jobs:
         run: |
           pip install --quiet pyyaml
           python3 <<'PY'
-          import json, yaml
+          import json, os, yaml
           from pathlib import Path
           data = yaml.safe_load(Path("system/versions/package-retention.yml").read_text())
           ghcr = data.get("ghcr", [])
           maven = data.get("maven", [])
-          with open("$GITHUB_OUTPUT", "a") as out:
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"ghcr_packages={json.dumps(ghcr)}\n")
               out.write(f"maven_packages={json.dumps(maven)}\n")
           print(f"GHCR packages: {len(ghcr)}")
