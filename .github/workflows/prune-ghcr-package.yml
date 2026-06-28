@@ -78,8 +78,11 @@ jobs:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
-          repositories: ${{ steps.repo.outputs.repository }}
+          repositories: |
+            lovablegarden-system
+            ${{ steps.repo.outputs.repository }}
           permission-packages: write
+          permission-contents: read
 
       - name: Checkout lovablegarden-system (prod lock pins)
         uses: actions/checkout@v4
