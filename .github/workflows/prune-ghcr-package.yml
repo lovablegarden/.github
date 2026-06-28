@@ -71,14 +71,14 @@ jobs:
           echo "repository=${REPO}" >> "$GITHUB_OUTPUT"
           echo "Source repository for ${IMAGE}: ${REPO}"
 
-      - name: Create GitHub App token
-        id: app-token
+      - name: Create GitHub App token (read prod lock)
+        id: content-token
         uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
-          permission-packages: write
+          repositories: lovablegarden-system
           permission-contents: read
 
       - name: Checkout lovablegarden-system (prod lock pins)
@@ -86,7 +86,7 @@ jobs:
         with:
           repository: lovablegarden/lovablegarden-system
           ref: main
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.content-token.outputs.token }}
           path: system
           sparse-checkout: |
             versions/services.lock.prod.yml
@@ -113,6 +113,16 @@ jobs:
           echo "skip-tags=${SKIP}" >> "$GITHUB_OUTPUT"
           echo "Protected tags: ${SKIP}"
 
+      - name: Create GitHub App token (packages)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+          repositories: ${{ steps.repo.outputs.repository }}
+          permission-packages: write
+
       - name: Prune old GHCR versions
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -125,10 +135,18 @@ jobs:
 
           PAGE=1
           ALL='[]'
+          SOURCE_REPO="${{ steps.repo.outputs.repository }}"
           while true; do
-            RESP=$(gh api \
+            if RESP=$(gh api \
               -H "Accept: application/vnd.github+json" \
-              "/orgs/lovablegarden/packages/container/${IMAGE_NAME}/versions?per_page=100&page=${PAGE}")
+              "/orgs/lovablegarden/packages/container/${IMAGE_NAME}/versions?per_page=100&page=${PAGE}" 2>/dev/null); then
+              :
+            else
+              echo "Org package API unavailable; trying repo-scoped endpoint for ${SOURCE_REPO}..."
+              RESP=$(gh api \
+                -H "Accept: application/vnd.github+json" \
+                "/repos/lovablegarden/${SOURCE_REPO}/packages/container/${IMAGE_NAME}/versions?per_page=100&page=${PAGE}")
+            fi
             COUNT=$(echo "$RESP" | jq 'length')
             ALL=$(echo "$ALL $RESP" | jq -s 'add')
             if [ "$COUNT" -lt 100 ]; then
