@@ -149,7 +149,9 @@ jobs:
 
           TOTAL=$(echo "$ALL" | jq 'length')
           echo "Found ${TOTAL} version(s) for ${IMAGE_NAME}"
-          export VERSIONS_JSON="$ALL"
+          VERSIONS_FILE="${RUNNER_TEMP}/ghcr-versions.json"
+          echo "$ALL" > "$VERSIONS_FILE"
+          export VERSIONS_FILE
 
           python3 <<'PY'
           import json, os, re, subprocess
@@ -159,7 +161,8 @@ jobs:
           dry_run = os.environ["DRY_RUN"].lower() == "true"
           protect = {t.strip().lstrip("v") for t in os.environ["PROTECT_TAGS"].split(",") if t.strip()}
 
-          versions = json.loads(os.environ["VERSIONS_JSON"])
+          with open(os.environ["VERSIONS_FILE"], encoding="utf-8") as f:
+              versions = json.load(f)
           semver_re = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
 
           def tags_for(v):
