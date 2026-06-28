@@ -7,9 +7,18 @@ on:
         description: 'Release tag or version (e.g. v1.2.3 or 1.2.3)'
         required: true
         type: string
+      prune_dry_run:
+        description: 'When true, package retention only logs deletions'
+        required: false
+        type: boolean
+        default: true
     secrets:
       GH_PACKAGES_TOKEN:
         description: 'GitHub Packages token'
+        required: false
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: false
+      LOVABLEGARDEN_BOT_APP_ID:
         required: false
 
 permissions:
@@ -19,6 +28,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -99,3 +110,17 @@ jobs:
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
             GH_PACKAGE_TOKEN=${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+
+  prune-package:
+    needs: [publish]
+    if: secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY != ''
+    permissions:
+      packages: write
+    uses: lovablegarden/.github/.github/workflows/prune-ghcr-package.yml@main
+    with:
+      image_name: ${{ github.event.repository.name }}
+      protect_versions: ${{ needs.publish.outputs.version }}
+      dry_run: ${{ inputs.prune_dry_run }}
+    secrets:
+      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}

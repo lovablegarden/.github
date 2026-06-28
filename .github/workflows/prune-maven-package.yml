@@ -1,0 +1,155 @@
+name: Prune Maven package
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        description: 'Full Maven package name (e.g. com.lovablegarden.security.lovablegarden-security-common)'
+        required: true
+        type: string
+      keep_count:
+        description: 'Number of semver versions to keep'
+        required: false
+        type: number
+        default: 3
+      dry_run:
+        description: 'Log deletions without executing'
+        required: false
+        type: boolean
+        default: true
+      protect_versions:
+        description: 'Comma-separated extra versions to never delete (e.g. current release)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: true
+      LOVABLEGARDEN_BOT_APP_ID:
+        required: false
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'Full Maven package name'
+        required: true
+        type: string
+      keep_count:
+        description: 'Number of semver versions to keep'
+        required: false
+        type: number
+        default: 3
+      dry_run:
+        description: 'Log deletions without executing'
+        required: true
+        type: boolean
+        default: true
+      protect_versions:
+        description: 'Comma-separated extra versions to never delete'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
+      - name: Prune old Maven versions
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          KEEP_COUNT: ${{ inputs.keep_count }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROTECT_VERSIONS: ${{ inputs.protect_versions }}
+        run: |
+          set -euo pipefail
+
+          is_semver() {
+            echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          }
+
+          # Collect all versions (paginated)
+          PAGE=1
+          ALL='[]'
+          while true; do
+            RESP=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/lovablegarden/packages/maven/${PACKAGE_NAME}/versions?per_page=100&page=${PAGE}")
+            COUNT=$(echo "$RESP" | jq 'length')
+            ALL=$(echo "$ALL $RESP" | jq -s 'add')
+            if [ "$COUNT" -lt 100 ]; then
+              break
+            fi
+            PAGE=$((PAGE + 1))
+          done
+
+          TOTAL=$(echo "$ALL" | jq 'length')
+          echo "Found ${TOTAL} version(s) for ${PACKAGE_NAME}"
+
+          # Build protect set: explicit input only (Maven packages are not in services.lock.prod.yml)
+          PROTECT=''
+          if [ -n "$PROTECT_VERSIONS" ]; then
+            PROTECT=$(echo "$PROTECT_VERSIONS" | tr ',' '\n' | sed 's/^v//' | tr -d '[:space:]' | paste -sd, -)
+          fi
+
+          # Filter semver, sort newest first
+          SORTED=$(echo "$ALL" | jq -c --arg protect "$PROTECT" '
+            [.[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$"))]
+            | sort_by(.created_at) | reverse
+          ')
+
+          SEMVER_COUNT=$(echo "$SORTED" | jq 'length')
+          echo "Semver versions: ${SEMVER_COUNT}"
+
+          if [ "$SEMVER_COUNT" -le "$KEEP_COUNT" ]; then
+            echo "Nothing to prune (at or below keep limit of ${KEEP_COUNT})"
+            exit 0
+          fi
+
+          # IDs to keep: newest KEEP_COUNT + any in protect list
+          KEEP_IDS=$(echo "$SORTED" | jq -c --argjson n "$KEEP_COUNT" --arg protect "$PROTECT" '
+            ( .[0:$n] | map(.id) ) as $recent
+            | ( if $protect == "" then [] else
+                ( $protect | split(",") | map(select(length > 0)) ) as $plist
+                | [ .[] | select(.name as $nm | $plist | index($nm)) | .id ]
+              end ) as $pinned
+            | ($recent + $pinned) | unique
+          ')
+
+          DELETE_IDS=$(echo "$SORTED" | jq -c --argjson keep "$KEEP_IDS" '
+            [ .[] | select(.id as $id | $keep | index($id) | not) | .id ]
+          ')
+
+          DELETE_COUNT=$(echo "$DELETE_IDS" | jq 'length')
+          echo "Versions to delete: ${DELETE_COUNT}"
+
+          echo "$SORTED" | jq -r --argjson keep "$KEEP_IDS" '
+            .[] | if (.id as $id | $keep | index($id)) then "KEEP  \(.name) (\(.id))" else "DELETE \(.name) (\(.id))" end
+          '
+
+          if [ "$DELETE_COUNT" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry_run=true — no versions deleted"
+            exit 0
+          fi
+
+          echo "$DELETE_IDS" | jq -r '.[]' | while read -r VID; do
+            echo "Deleting version id ${VID}..."
+            gh api \
+              --method DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/lovablegarden/packages/maven/${PACKAGE_NAME}/versions/${VID}"
+          done

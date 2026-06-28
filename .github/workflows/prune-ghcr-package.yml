@@ -1,0 +1,113 @@
+name: Prune GHCR package
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: 'GHCR package name (e.g. lovablegarden-plants)'
+        required: true
+        type: string
+      keep_count:
+        description: 'Number of semver release tags to keep'
+        required: false
+        type: number
+        default: 3
+      dry_run:
+        description: 'Log deletions without executing'
+        required: false
+        type: boolean
+        default: true
+      protect_versions:
+        description: 'Comma-separated extra tags to never delete (e.g. current release)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: true
+      LOVABLEGARDEN_BOT_APP_ID:
+        required: false
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: 'GHCR package name (e.g. lovablegarden-plants)'
+        required: true
+        type: string
+      keep_count:
+        description: 'Number of semver release tags to keep'
+        required: false
+        type: number
+        default: 3
+      dry_run:
+        description: 'Log deletions without executing'
+        required: true
+        type: boolean
+        default: true
+      protect_versions:
+        description: 'Comma-separated extra tags to never delete'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
+      - name: Checkout lovablegarden-system (prod lock pins)
+        uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/lovablegarden-system
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: system
+          sparse-checkout: |
+            versions/services.lock.prod.yml
+
+      - name: Build protected tag list
+        id: protect
+        run: |
+          IMAGE="${{ inputs.image_name }}"
+          SKIP="latest"
+
+          if [ -f system/versions/services.lock.prod.yml ]; then
+            PIN=$(grep -E "^  ${IMAGE}:" system/versions/services.lock.prod.yml | awk '{print $2}' | tr -d '[:space:]' || true)
+            if [ -n "$PIN" ]; then
+              SKIP="${SKIP},${PIN}"
+              echo "Prod lock pin for ${IMAGE}: ${PIN}"
+            fi
+          fi
+
+          EXTRA="${{ inputs.protect_versions }}"
+          if [ -n "$EXTRA" ]; then
+            SKIP="${SKIP},${EXTRA}"
+          fi
+
+          echo "skip-tags=${SKIP}" >> "$GITHUB_OUTPUT"
+          echo "Protected tags: ${SKIP}"
+
+      - name: Prune old GHCR versions
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account-type: org
+          org-name: lovablegarden
+          image-names: ${{ inputs.image_name }}
+          cut-off: 0 hours ago UTC
+          timestamp-to-use: updated_at
+          keep-at-least: ${{ inputs.keep_count }}
+          filter-tags: '*.*.*'
+          filter-include-untagged: 'false'
+          skip-tags: ${{ steps.protect.outputs.skip-tags }}
+          dry-run: ${{ inputs.dry_run }}
+          token: ${{ steps.app-token.outputs.token }}
+          token-type: pat

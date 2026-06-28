@@ -2,8 +2,28 @@ name: Publish library on Release
 
 on:
   workflow_call:
+    inputs:
+      maven_package_names:
+        description: 'Comma-separated Maven package names to prune after publish'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Release version to protect from pruning (e.g. v1.2.3)'
+        required: false
+        type: string
+        default: ''
+      prune_dry_run:
+        description: 'When true, package retention only logs deletions'
+        required: false
+        type: boolean
+        default: true
     secrets:
       GH_PACKAGES_TOKEN:
+        required: false
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: false
+      LOVABLEGARDEN_BOT_APP_ID:
         required: false
 
 permissions:
@@ -42,3 +62,21 @@ jobs:
             exit 0
           fi
           exit "$code"
+
+  prune-maven:
+    needs: [publish]
+    if: inputs.maven_package_names != '' && secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        package_name: ${{ fromJSON(format('["{0}"]', join(split(inputs.maven_package_names, ','), '","'))) }}
+    permissions:
+      packages: write
+    uses: lovablegarden/.github/.github/workflows/prune-maven-package.yml@main
+    with:
+      package_name: ${{ matrix.package_name }}
+      protect_versions: ${{ inputs.version }}
+      dry_run: ${{ inputs.prune_dry_run }}
+    secrets:
+      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
