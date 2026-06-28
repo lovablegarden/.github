@@ -63,6 +63,7 @@ jobs:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
+          permission-packages: write
 
       - name: Prune old Maven versions
         env:

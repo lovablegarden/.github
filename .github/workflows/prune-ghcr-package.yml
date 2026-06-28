@@ -56,6 +56,21 @@ jobs:
   prune:
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve source repository
+        id: repo
+        run: |
+          IMAGE="${{ inputs.image_name }}"
+          case "$IMAGE" in
+            supabase-jwt-validator|lovablegarden-system)
+              REPO="lovablegarden-system"
+              ;;
+            *)
+              REPO="$IMAGE"
+              ;;
+          esac
+          echo "repository=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "Source repository for ${IMAGE}: ${REPO}"
+
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
@@ -63,6 +78,8 @@ jobs:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
+          repositories: ${{ steps.repo.outputs.repository }}
+          permission-packages: write
 
       - name: Checkout lovablegarden-system (prod lock pins)
         uses: actions/checkout@v4
