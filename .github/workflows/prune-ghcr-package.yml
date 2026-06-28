@@ -27,6 +27,8 @@ on:
         required: true
       LOVABLEGARDEN_BOT_APP_ID:
         required: false
+      GH_PACKAGES_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       image_name:
@@ -113,20 +115,9 @@ jobs:
           echo "skip-tags=${SKIP}" >> "$GITHUB_OUTPUT"
           echo "Protected tags: ${SKIP}"
 
-      - name: Create GitHub App token (packages)
-        if: github.repository == 'lovablegarden/.github'
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
-          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
-          owner: lovablegarden
-          repositories: ${{ steps.repo.outputs.repository }}
-          permission-packages: write
-
       - name: Prune old GHCR versions
         env:
-          GH_TOKEN: ${{ github.repository == 'lovablegarden/.github' && steps.app-token.outputs.token || github.token }}
+          GH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
           IMAGE_NAME: ${{ inputs.image_name }}
           KEEP_COUNT: ${{ inputs.keep_count }}
           DRY_RUN: ${{ inputs.dry_run }}
