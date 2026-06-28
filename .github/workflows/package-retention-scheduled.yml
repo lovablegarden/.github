@@ -57,7 +57,7 @@ jobs:
           print(f"Maven packages: {len(maven)}")
           PY
 
-  prune-ghcr:
+  trigger-ghcr-retention:
     needs: [load-manifest]
     if: needs.load-manifest.outputs.ghcr_packages != '[]'
     strategy:
@@ -65,13 +65,39 @@ jobs:
       max-parallel: 5
       matrix:
         image_name: ${{ fromJson(needs.load-manifest.outputs.ghcr_packages) }}
-    uses: lovablegarden/.github/.github/workflows/prune-ghcr-package.yml@main
-    with:
-      image_name: ${{ matrix.image_name }}
-      dry_run: true
-    secrets:
-      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
-      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+          permission-contents: read
+
+      - name: Resolve owning repository
+        id: map
+        run: |
+          case "${{ matrix.image_name }}" in
+            supabase-jwt-validator|lovablegarden-system)
+              echo "repository=lovablegarden-system" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "repository=${{ matrix.image_name }}" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      - name: Dispatch GHCR retention in owning repository
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || true }}
+        run: |
+          gh api --method POST "repos/lovablegarden/${{ steps.map.outputs.repository }}/dispatches" \
+            -f event_type=package-retention \
+            -f "client_payload[image]=${{ matrix.image_name }}" \
+            -f "client_payload[dry_run]=${DRY_RUN}"
+          echo "Dispatched package-retention for ${{ matrix.image_name }} -> ${{ steps.map.outputs.repository }}"
 
   prune-maven:
     needs: [load-manifest]
@@ -84,7 +110,7 @@ jobs:
     uses: lovablegarden/.github/.github/workflows/prune-maven-package.yml@main
     with:
       package_name: ${{ matrix.package_name }}
-      dry_run: true
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || true }}
     secrets:
       LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
       LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
