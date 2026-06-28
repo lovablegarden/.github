@@ -33,6 +33,8 @@ Package retention workflows (`prune-ghcr-package.yml`, `prune-maven-package.yml`
 
 In the GitHub App settings (**Permissions → Repository permissions** or org-level **Packages**), grant **Packages: Read and write**. Workflow jobs also declare `permissions: packages: write`.
 
+**GHCR note:** Org container package list/delete uses org secret `GH_PACKAGES_TOKEN` (a PAT with `read:packages` and `delete:packages`). The App installation token works for Maven packages and for checking out `lovablegarden-system`, but not for GHCR REST APIs.
+
 ## Pilot workflow wiring
 
 Pass the private key into reusable workflows from `lovablegarden/.github`:
