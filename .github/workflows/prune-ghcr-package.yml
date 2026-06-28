@@ -97,17 +97,97 @@ jobs:
           echo "Protected tags: ${SKIP}"
 
       - name: Prune old GHCR versions
-        uses: snok/container-retention-policy@v2.2.1
-        with:
-          account-type: org
-          org-name: lovablegarden
-          image-names: ${{ inputs.image_name }}
-          cut-off: 0 hours ago UTC
-          timestamp-to-use: updated_at
-          keep-at-least: ${{ inputs.keep_count }}
-          filter-tags: '*.*.*'
-          filter-include-untagged: 'false'
-          skip-tags: ${{ steps.protect.outputs.skip-tags }}
-          dry-run: ${{ inputs.dry_run }}
-          token: ${{ steps.app-token.outputs.token }}
-          token-type: pat
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          IMAGE_NAME: ${{ inputs.image_name }}
+          KEEP_COUNT: ${{ inputs.keep_count }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROTECT_TAGS: ${{ steps.protect.outputs.skip-tags }}
+        run: |
+          set -euo pipefail
+
+          PAGE=1
+          ALL='[]'
+          while true; do
+            RESP=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/lovablegarden/packages/container/${IMAGE_NAME}/versions?per_page=100&page=${PAGE}")
+            COUNT=$(echo "$RESP" | jq 'length')
+            ALL=$(echo "$ALL $RESP" | jq -s 'add')
+            if [ "$COUNT" -lt 100 ]; then
+              break
+            fi
+            PAGE=$((PAGE + 1))
+          done
+
+          TOTAL=$(echo "$ALL" | jq 'length')
+          echo "Found ${TOTAL} version(s) for ${IMAGE_NAME}"
+          export VERSIONS_JSON="$ALL"
+
+          python3 <<'PY'
+          import json, os, re, subprocess
+
+          image = os.environ["IMAGE_NAME"]
+          keep_count = int(os.environ["KEEP_COUNT"])
+          dry_run = os.environ["DRY_RUN"].lower() == "true"
+          protect = {t.strip().lstrip("v") for t in os.environ["PROTECT_TAGS"].split(",") if t.strip()}
+
+          versions = json.loads(os.environ["VERSIONS_JSON"])
+          semver_re = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
+
+          def tags_for(v):
+              tags = v.get("metadata", {}).get("container", {}).get("tags")
+              if tags is None:
+                  tags = v.get("name") or []
+              return [str(t) for t in tags]
+
+          semver_rank = {}
+          for v in versions:
+              for tag in tags_for(v):
+                  if semver_re.match(tag):
+                      semver_rank[tag] = max(semver_rank.get(tag, ""), v["created_at"])
+
+          keep_semver = {t for t, _ in sorted(semver_rank.items(), key=lambda x: x[1], reverse=True)[:keep_count]}
+          keep_tags = keep_semver | protect
+          print(f"Keep semver tags: {sorted(keep_semver)}")
+          print(f"Protected tags: {sorted(protect)}")
+
+          to_delete = []
+          for v in versions:
+              vid = v["id"]
+              tags = tags_for(v)
+              if not tags:
+                  print(f"KEEP  untagged ({vid})")
+                  continue
+              if "latest" in tags or any(t in protect for t in tags):
+                  print(f"KEEP  {tags} ({vid}) protected")
+                  continue
+              semver_tags = [t for t in tags if semver_re.match(t)]
+              if semver_tags and all(t in keep_tags for t in semver_tags):
+                  print(f"KEEP  {tags} ({vid})")
+                  continue
+              if semver_tags and any(t not in keep_tags for t in semver_tags):
+                  print(f"DELETE {tags} ({vid})")
+                  to_delete.append(vid)
+                  continue
+              if not semver_tags:
+                  print(f"DELETE {tags} ({vid}) branch-only")
+                  to_delete.append(vid)
+                  continue
+              print(f"KEEP  {tags} ({vid})")
+
+          print(f"Versions to delete: {len(to_delete)}")
+          if not to_delete:
+              raise SystemExit(0)
+          if dry_run:
+              print("dry_run=true — no versions deleted")
+              raise SystemExit(0)
+
+          for vid in to_delete:
+              print(f"Deleting version id {vid}...")
+              subprocess.check_call([
+                  "gh", "api", "--method", "DELETE",
+                  "-H", "Accept: application/vnd.github+json",
+                  f"/orgs/lovablegarden/packages/container/{image}/versions/{vid}",
+              ])
+          PY
