@@ -113,7 +113,6 @@ jobs:
 
   prune-package:
     needs: [publish]
-    if: secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY != ''
     permissions:
       packages: write
     uses: lovablegarden/.github/.github/workflows/prune-ghcr-package.yml@main
