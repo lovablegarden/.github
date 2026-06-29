@@ -9,7 +9,7 @@ on:
         description: 'Log deletions without executing'
         required: true
         type: boolean
-        default: true
+        default: false
 
 permissions:
   packages: write
@@ -93,7 +93,7 @@ jobs:
       - name: Dispatch GHCR retention in owning repository
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || true }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
           gh api --method POST "repos/lovablegarden/${{ steps.map.outputs.repository }}/dispatches" \
             -f event_type=package-retention \
@@ -112,7 +112,7 @@ jobs:
     uses: lovablegarden/.github/.github/workflows/prune-maven-package.yml@main
     with:
       package_name: ${{ matrix.package_name }}
-      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || true }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
     secrets:
       LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
       LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}

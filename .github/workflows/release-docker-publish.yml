@@ -11,7 +11,7 @@ on:
         description: 'When true, package retention only logs deletions'
         required: false
         type: boolean
-        default: true
+        default: false
     secrets:
       GH_PACKAGES_TOKEN:
         description: 'GitHub Packages token'
