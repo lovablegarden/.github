@@ -118,7 +118,7 @@ jobs:
       with:
         name: build-artifacts-${{ github.run_id }}
         path: dist/
-        retention-days: 7
+        retention-days: 1
     
     - name: Upload production build
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -126,7 +126,7 @@ jobs:
       with:
         name: production-build-${{ github.run_id }}
         path: dist/
-        retention-days: 30
+        retention-days: 1
 
   docker:
     runs-on: ubuntu-latest
