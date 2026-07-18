@@ -63,13 +63,34 @@ jobs:
           fi
           exit "$code"
 
-  prune-maven:
+  # GitHub Actions expressions have no split(); build a JSON array for matrix.
+  prepare-prune-matrix:
     needs: [publish]
-    if: inputs.maven_package_names != '' && secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY != ''
+    if: inputs.maven_package_names != ''
+    runs-on: ubuntu-latest
+    outputs:
+      package_names: ${{ steps.matrix.outputs.package_names }}
+    steps:
+      - id: matrix
+        env:
+          NAMES: ${{ inputs.maven_package_names }}
+        run: |
+          json=$(printf '%s' "$NAMES" \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | awk 'NF' \
+            | jq -R . \
+            | jq -s -c .)
+          echo "package_names=$json" >> "$GITHUB_OUTPUT"
+          echo "Prune matrix: $json"
+
+  prune-maven:
+    needs: [prepare-prune-matrix]
+    if: needs.prepare-prune-matrix.result == 'success'
     strategy:
       fail-fast: false
       matrix:
-        package_name: ${{ fromJSON(format('["{0}"]', join(split(inputs.maven_package_names, ','), '","'))) }}
+        package_name: ${{ fromJSON(needs.prepare-prune-matrix.outputs.package_names) }}
     permissions:
       packages: write
     uses: lovablegarden/.github/.github/workflows/prune-maven-package.yml@main
