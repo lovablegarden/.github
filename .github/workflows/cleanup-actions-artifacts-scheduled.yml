@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           KEEP="${KEEP:-1}"
           DRY_RUN="${DRY_RUN:-false}"
-          # Skip very recent artifacts so in-flight CI publish jobs are not broken.
+          # Skip very recent *active* artifacts so in-flight CI publish jobs are not broken.
           SAFETY_HOURS=2
 
           if ! [[ "$KEEP" =~ ^[0-9]+$ ]]; then
@@ -93,35 +93,57 @@ jobs:
 
           echo "Repo=${REPO} keep=${KEEP} dry_run=${DRY_RUN} safety_hours=${SAFETY_HOURS}"
 
+          # Columns: id, created_at, name, size, expired(true|false)
           mapfile -t ROWS < <(
             gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
-              --jq '.artifacts[] | select(.expired == false) | [.id, .created_at, .name, (.size_in_bytes|tostring)] | @tsv' \
+              --jq '.artifacts[] | [.id, .created_at, .name, (.size_in_bytes|tostring), (.expired|tostring)] | @tsv' \
               | sort -t$'\t' -k2,2r
           )
 
           TOTAL=${#ROWS[@]}
-          echo "Found ${TOTAL} non-expired artifact(s)"
+          echo "Found ${TOTAL} artifact(s) (including expired — expired still counts toward Actions storage)"
           if [ "$TOTAL" -eq 0 ]; then
             echo "Nothing to clean up."
             exit 0
           fi
 
           CUTOFF=$(date -u -d "${SAFETY_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ)
-          echo "Safety cutoff (do not delete newer than): ${CUTOFF}"
+          echo "Safety cutoff for active artifacts (do not delete newer than): ${CUTOFF}"
 
-          DELETED=0
+          delete_one() {
+            local id="$1" size="$2" created="$3" name="$4" reason="$5"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRYRUN DELETE (${reason}) id=${id} size=${size} created=${created} name=${name}"
+            else
+              echo "DELETE (${reason}) id=${id} size=${size} created=${created} name=${name}"
+              gh api --method DELETE "repos/${REPO}/actions/artifacts/${id}" >/dev/null
+            fi
+          }
+
+          DELETED_EXPIRED=0
+          DELETED_ACTIVE=0
           SKIPPED_RECENT=0
           FREED=0
           KEPT=0
-          idx=0
+          ACTIVE_IDX=0
+
           for row in "${ROWS[@]}"; do
             id=$(printf '%s\n' "$row" | cut -f1)
             created=$(printf '%s\n' "$row" | cut -f2)
             name=$(printf '%s\n' "$row" | cut -f3)
             size=$(printf '%s\n' "$row" | cut -f4)
-            idx=$((idx + 1))
+            expired=$(printf '%s\n' "$row" | cut -f5)
 
-            if [ "$idx" -le "$KEEP" ]; then
+            # Expired artifacts no longer usable but still bill storage — always remove.
+            if [ "$expired" = "true" ]; then
+              delete_one "$id" "$size" "$created" "$name" "expired"
+              DELETED_EXPIRED=$((DELETED_EXPIRED + 1))
+              FREED=$((FREED + size))
+              continue
+            fi
+
+            ACTIVE_IDX=$((ACTIVE_IDX + 1))
+            if [ "$ACTIVE_IDX" -le "$KEEP" ]; then
               echo "KEEP   id=${id} size=${size} created=${created} name=${name}"
               KEPT=$((KEPT + 1))
               continue
@@ -133,14 +155,9 @@ jobs:
               continue
             fi
 
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "DRYRUN DELETE id=${id} size=${size} created=${created} name=${name}"
-            else
-              echo "DELETE id=${id} size=${size} created=${created} name=${name}"
-              gh api --method DELETE "repos/${REPO}/actions/artifacts/${id}" >/dev/null
-            fi
-            DELETED=$((DELETED + 1))
+            delete_one "$id" "$size" "$created" "$name" "active-excess"
+            DELETED_ACTIVE=$((DELETED_ACTIVE + 1))
             FREED=$((FREED + size))
           done
 
-          echo "Done ${REPO}: kept=${KEPT} skipped_recent=${SKIPPED_RECENT} deleted=${DELETED} bytes≈${FREED} dry_run=${DRY_RUN}"
+          echo "Done ${REPO}: kept=${KEPT} skipped_recent=${SKIPPED_RECENT} deleted_expired=${DELETED_EXPIRED} deleted_active=${DELETED_ACTIVE} bytes≈${FREED} dry_run=${DRY_RUN}"
