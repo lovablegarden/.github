@@ -93,7 +93,7 @@ jobs:
         with:
           name: test-results
           path: build/test-results/test/
-          retention-days: 3
+          retention-days: 1
 
   publish:
     runs-on: ubuntu-latest

@@ -27,11 +27,13 @@ Install the App on:
 
 The org installation (`lovablegarden-bot`) is configured for **all repositories**; new service repos are covered automatically once release-please is wired.
 
-**Repository permissions:** Contents Read & write, Pull requests Read & write, **Packages Read & write**.
+**Repository permissions:** Contents Read & write, Pull requests Read & write, **Packages Read & write**, **Actions Read & write**.
 
 Package retention workflows (`prune-ghcr-package.yml`, `prune-maven-package.yml`, `package-retention-scheduled.yml`) delete old GHCR and Maven artifacts. The App must be able to list and delete org packages.
 
-In the GitHub App settings (**Permissions → Repository permissions** or org-level **Packages**), grant **Packages: Read and write**. Workflow jobs also declare `permissions: packages: write`.
+Actions artifact cleanup (`cleanup-actions-artifacts-scheduled.yml`) deletes old workflow artifacts across service repos (Actions storage quota). The App needs **Actions: Read and write**.
+
+In the GitHub App settings (**Permissions → Repository permissions**), grant **Packages: Read and write** and **Actions: Read and write**. Workflow jobs also declare the matching `permissions:` blocks.
 
 **GHCR note:** Org container package list/delete uses org secret `GH_PACKAGES_TOKEN` (a PAT with `read:packages` and `delete:packages`). The App installation token works for Maven packages and for checking out `lovablegarden-system`, but not for GHCR REST APIs.
 
