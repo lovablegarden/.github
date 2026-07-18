@@ -1,0 +1,146 @@
+# Deletes old Actions workflow artifacts across org repos (Actions storage quota).
+# Separate from GHCR/Maven package retention (package-retention-scheduled.yml).
+name: Cleanup Actions artifacts (scheduled)
+
+on:
+  schedule:
+    # Daily 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      keep_count:
+        description: "Newest artifacts to keep per repository"
+        required: true
+        type: number
+        default: 1
+      dry_run:
+        description: "Log deletions without executing"
+        required: true
+        type: boolean
+        default: false
+      repository:
+        description: "Optional single repo (e.g. lovablegarden-plants). Empty = all listed repos."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.list.outputs.repos }}
+      keep_count: ${{ steps.list.outputs.keep_count }}
+      dry_run: ${{ steps.list.outputs.dry_run }}
+    steps:
+      - name: Resolve repo list and inputs
+        id: list
+        run: |
+          DEFAULT_REPOS='["lovablegarden-plants","lovablegarden-gardenbook","lovablegarden-tasks","lovablegarden-audit","lovablegarden-community","lovablegarden-commercial","lovablegarden-pantry","lovablegarden-media","lovablegarden-wiki","lovablegarden-users","lovablegarden-knowledgehub","lovablegarden-supplies","lovablegarden-system","lovablegarden-security-common"]'
+          SINGLE="${{ github.event_name == 'workflow_dispatch' && inputs.repository || '' }}"
+          if [ -n "$SINGLE" ]; then
+            echo "repos=[\"${SINGLE}\"]" >> "$GITHUB_OUTPUT"
+          else
+            echo "repos=${DEFAULT_REPOS}" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "keep_count=${{ inputs.keep_count }}" >> "$GITHUB_OUTPUT"
+            echo "dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "keep_count=1" >> "$GITHUB_OUTPUT"
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  cleanup:
+    needs: [prepare]
+    if: needs.prepare.outputs.repos != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        repository: ${{ fromJson(needs.prepare.outputs.repos) }}
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+          repositories: ${{ matrix.repository }}
+          permission-actions: write
+
+      - name: Delete old artifacts (keep newest N)
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: lovablegarden/${{ matrix.repository }}
+          KEEP: ${{ needs.prepare.outputs.keep_count }}
+          DRY_RUN: ${{ needs.prepare.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          KEEP="${KEEP:-1}"
+          DRY_RUN="${DRY_RUN:-false}"
+          # Skip very recent artifacts so in-flight CI publish jobs are not broken.
+          SAFETY_HOURS=2
+
+          if ! [[ "$KEEP" =~ ^[0-9]+$ ]]; then
+            echo "Invalid keep_count: $KEEP"
+            exit 1
+          fi
+
+          echo "Repo=${REPO} keep=${KEEP} dry_run=${DRY_RUN} safety_hours=${SAFETY_HOURS}"
+
+          mapfile -t ROWS < <(
+            gh api --paginate "repos/${REPO}/actions/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | [.id, .created_at, .name, (.size_in_bytes|tostring)] | @tsv' \
+              | sort -t$'\t' -k2,2r
+          )
+
+          TOTAL=${#ROWS[@]}
+          echo "Found ${TOTAL} non-expired artifact(s)"
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "Nothing to clean up."
+            exit 0
+          fi
+
+          CUTOFF=$(date -u -d "${SAFETY_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Safety cutoff (do not delete newer than): ${CUTOFF}"
+
+          DELETED=0
+          SKIPPED_RECENT=0
+          FREED=0
+          KEPT=0
+          idx=0
+          for row in "${ROWS[@]}"; do
+            id=$(printf '%s\n' "$row" | cut -f1)
+            created=$(printf '%s\n' "$row" | cut -f2)
+            name=$(printf '%s\n' "$row" | cut -f3)
+            size=$(printf '%s\n' "$row" | cut -f4)
+            idx=$((idx + 1))
+
+            if [ "$idx" -le "$KEEP" ]; then
+              echo "KEEP   id=${id} size=${size} created=${created} name=${name}"
+              KEPT=$((KEPT + 1))
+              continue
+            fi
+
+            if [[ "$created" > "$CUTOFF" ]]; then
+              echo "SKIP   id=${id} (newer than safety window) created=${created} name=${name}"
+              SKIPPED_RECENT=$((SKIPPED_RECENT + 1))
+              continue
+            fi
+
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "DRYRUN DELETE id=${id} size=${size} created=${created} name=${name}"
+            else
+              echo "DELETE id=${id} size=${size} created=${created} name=${name}"
+              gh api --method DELETE "repos/${REPO}/actions/artifacts/${id}" >/dev/null
+            fi
+            DELETED=$((DELETED + 1))
+            FREED=$((FREED + size))
+          done
+
+          echo "Done ${REPO}: kept=${KEPT} skipped_recent=${SKIPPED_RECENT} deleted=${DELETED} bytes≈${FREED} dry_run=${DRY_RUN}"
