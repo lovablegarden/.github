@@ -110,18 +110,47 @@ jobs:
           CUTOFF=$(date -u -d "${SAFETY_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ)
           echo "Safety cutoff for active artifacts (do not delete newer than): ${CUTOFF}"
 
+          # Returns 0 on success/dry-run, 1 on hard failure after retries.
           delete_one() {
             local id="$1" size="$2" created="$3" name="$4" reason="$5"
             if [ "$DRY_RUN" = "true" ]; then
               echo "DRYRUN DELETE (${reason}) id=${id} size=${size} created=${created} name=${name}"
-            else
-              echo "DELETE (${reason}) id=${id} size=${size} created=${created} name=${name}"
-              gh api --method DELETE "repos/${REPO}/actions/artifacts/${id}" >/dev/null
+              return 0
             fi
+
+            echo "DELETE (${reason}) id=${id} size=${size} created=${created} name=${name}"
+            local attempt=1
+            local max_attempts=5
+            local sleep_s=2
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if gh api --method DELETE "repos/${REPO}/actions/artifacts/${id}" >/dev/null 2>tmp-gh-err; then
+                rm -f tmp-gh-err
+                # Light pacing — large repos otherwise trip GitHub 504s.
+                sleep 0.2
+                return 0
+              fi
+              local err
+              err=$(cat tmp-gh-err 2>/dev/null || true)
+              rm -f tmp-gh-err
+              # Already gone is fine (previous partial run).
+              if echo "$err" | grep -qiE '404|Not Found'; then
+                echo "WARN  id=${id} already gone"
+                return 0
+              fi
+              echo "WARN  delete id=${id} attempt ${attempt}/${max_attempts} failed: ${err}"
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                return 1
+              fi
+              sleep "$sleep_s"
+              sleep_s=$((sleep_s * 2))
+              attempt=$((attempt + 1))
+            done
+            return 1
           }
 
           DELETED_EXPIRED=0
           DELETED_ACTIVE=0
+          FAILED=0
           SKIPPED_RECENT=0
           FREED=0
           KEPT=0
@@ -136,9 +165,12 @@ jobs:
 
             # Expired artifacts no longer usable but still bill storage — always remove.
             if [ "$expired" = "true" ]; then
-              delete_one "$id" "$size" "$created" "$name" "expired"
-              DELETED_EXPIRED=$((DELETED_EXPIRED + 1))
-              FREED=$((FREED + size))
+              if delete_one "$id" "$size" "$created" "$name" "expired"; then
+                DELETED_EXPIRED=$((DELETED_EXPIRED + 1))
+                FREED=$((FREED + size))
+              else
+                FAILED=$((FAILED + 1))
+              fi
               continue
             fi
 
@@ -155,9 +187,16 @@ jobs:
               continue
             fi
 
-            delete_one "$id" "$size" "$created" "$name" "active-excess"
-            DELETED_ACTIVE=$((DELETED_ACTIVE + 1))
-            FREED=$((FREED + size))
+            if delete_one "$id" "$size" "$created" "$name" "active-excess"; then
+              DELETED_ACTIVE=$((DELETED_ACTIVE + 1))
+              FREED=$((FREED + size))
+            else
+              FAILED=$((FAILED + 1))
+            fi
           done
 
-          echo "Done ${REPO}: kept=${KEPT} skipped_recent=${SKIPPED_RECENT} deleted_expired=${DELETED_EXPIRED} deleted_active=${DELETED_ACTIVE} bytes≈${FREED} dry_run=${DRY_RUN}"
+          echo "Done ${REPO}: kept=${KEPT} skipped_recent=${SKIPPED_RECENT} deleted_expired=${DELETED_EXPIRED} deleted_active=${DELETED_ACTIVE} failed=${FAILED} bytes≈${FREED} dry_run=${DRY_RUN}"
+          if [ "$FAILED" -gt 0 ]; then
+            echo "Some deletes failed (often transient 504). Re-run the workflow for this repo."
+            exit 1
+          fi
