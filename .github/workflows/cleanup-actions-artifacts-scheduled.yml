@@ -38,7 +38,7 @@ jobs:
       - name: Resolve repo list and inputs
         id: list
         run: |
-          DEFAULT_REPOS='["lovablegarden-plants","lovablegarden-gardenbook","lovablegarden-tasks","lovablegarden-audit","lovablegarden-community","lovablegarden-commercial","lovablegarden-pantry","lovablegarden-media","lovablegarden-wiki","lovablegarden-users","lovablegarden-knowledgehub","lovablegarden-supplies","lovablegarden-system","lovablegarden-security-common"]'
+          DEFAULT_REPOS='["lovablegarden-plants","lovablegarden-gardenbook","lovablegarden-tasks","lovablegarden-audit","lovablegarden-community","lovablegarden-commercial","lovablegarden-pantry","lovablegarden-media","lovablegarden-wiki","lovablegarden-users","lovablegarden-knowledgehub","lovablegarden-supplies","lovablegarden-system","lovablegarden-security-common","lovablegarden-openapi-spec","gardentalkz-client"]'
           SINGLE="${{ github.event_name == 'workflow_dispatch' && inputs.repository || '' }}"
           if [ -n "$SINGLE" ]; then
             echo "repos=[\"${SINGLE}\"]" >> "$GITHUB_OUTPUT"
