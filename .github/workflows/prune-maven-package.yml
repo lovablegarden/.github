@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of semver versions to keep'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; BOM-referenced versions are always kept)'
         required: false
         type: number
         default: 3
@@ -34,7 +34,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of semver versions to keep'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; BOM-referenced versions are always kept)'
         required: false
         type: number
         default: 3
@@ -64,6 +64,8 @@ jobs:
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
           permission-packages: write
+          # Read consumer gradle.properties for the BOM reference guard
+          permission-contents: read
 
       - name: Prune old Maven versions
         env:
@@ -74,59 +76,172 @@ jobs:
           PROTECT_VERSIONS: ${{ inputs.protect_versions }}
         run: |
           set -euo pipefail
+          shopt -s inherit_errexit
 
-          is_semver() {
-            echo "$1" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          BOM_PACKAGE='com.lovablegarden.lovablegarden-bom'
+          BOM_POM_BASE='https://maven.pkg.github.com/lovablegarden/lovablegarden-security-common/com/lovablegarden/lovablegarden-bom'
+          SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          WORK=$(mktemp -d)
+
+          fail() {
+            echo "::error::$*"
+            echo "Fail-closed: no versions deleted"
+            exit 1
           }
 
-          # Collect all versions (paginated)
-          PAGE=1
-          ALL='[]'
-          while true; do
-            RESP=$(gh api \
-              -H "Accept: application/vnd.github+json" \
-              "/orgs/lovablegarden/packages/maven/${PACKAGE_NAME}/versions?per_page=100&page=${PAGE}")
-            COUNT=$(echo "$RESP" | jq 'length')
-            ALL=$(echo "$ALL $RESP" | jq -s 'add')
-            if [ "$COUNT" -lt 100 ]; then
-              break
-            fi
-            PAGE=$((PAGE + 1))
-          done
+          # All versions of a package as one JSON array (paginated)
+          list_versions() {
+            local pkg="$1" page=1 all='[]' resp count
+            while true; do
+              resp=$(gh api \
+                -H "Accept: application/vnd.github+json" \
+                "/orgs/lovablegarden/packages/maven/${pkg}/versions?per_page=100&page=${page}")
+              count=$(echo "$resp" | jq 'length')
+              all=$(echo "$all $resp" | jq -s 'add')
+              if [ "$count" -lt 100 ]; then
+                break
+              fi
+              page=$((page + 1))
+            done
+            echo "$all"
+          }
 
+          ALL=$(list_versions "$PACKAGE_NAME")
           TOTAL=$(echo "$ALL" | jq 'length')
           echo "Found ${TOTAL} version(s) for ${PACKAGE_NAME}"
 
-          # Build protect set: explicit input only (Maven packages are not in services.lock.prod.yml)
-          PROTECT=''
-          if [ -n "$PROTECT_VERSIONS" ]; then
-            PROTECT=$(echo "$PROTECT_VERSIONS" | tr ',' '\n' | sed 's/^v//' | tr -d '[:space:]' | paste -sd, -)
-          fi
-
-          # Filter semver, sort newest first
-          SORTED=$(echo "$ALL" | jq -c --arg protect "$PROTECT" '
-            [.[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$"))]
+          # Semver versions, newest first. Non-semver names are never touched.
+          SORTED=$(echo "$ALL" | jq -c --arg re "$SEMVER_RE" '
+            [.[] | select(.name | test($re))]
             | sort_by(.created_at) | reverse
           ')
-
           SEMVER_COUNT=$(echo "$SORTED" | jq 'length')
           echo "Semver versions: ${SEMVER_COUNT}"
 
-          if [ "$SEMVER_COUNT" -le "$KEEP_COUNT" ]; then
-            echo "Nothing to prune (at or below keep limit of ${KEEP_COUNT})"
+          # Only releases fill the keep window. -SNAPSHOT versions are mutable
+          # and must not push releases out of it; they survive only if protected.
+          # Returns the ids to keep for a given JSON array of protected names.
+          keep_ids() {
+            echo "$SORTED" | jq -c --argjson n "$KEEP_COUNT" --argjson protect "$1" '
+              ( [ .[] | select(.name | endswith("-SNAPSHOT") | not) ][0:$n] | map(.id) ) as $recent
+              | [ .[] | select(.name as $nm | $protect | index($nm)) | .id ] as $pinned
+              | ($recent + $pinned) | unique
+            '
+          }
+
+          INPUT_PROTECT=$(echo "$PROTECT_VERSIONS" | tr ',' '\n' | sed 's/[[:space:]]//g; s/^v//' \
+            | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          CANDIDATES=$(echo "$SORTED" | jq -c --argjson keep "$(keep_ids "$INPUT_PROTECT")" '
+            [ .[] | select(.id as $id | $keep | index($id) | not) ]
+          ')
+          if [ "$(echo "$CANDIDATES" | jq 'length')" -eq 0 ]; then
+            echo "Nothing to prune (keep limit ${KEEP_COUNT}, protect: ${PROTECT_VERSIONS:-none})"
             exit 0
           fi
 
-          # IDs to keep: newest KEEP_COUNT + any in protect list
-          KEEP_IDS=$(echo "$SORTED" | jq -c --argjson n "$KEEP_COUNT" --arg protect "$PROTECT" '
-            ( .[0:$n] | map(.id) ) as $recent
-            | ( if $protect == "" then [] else
-                ( $protect | split(",") | map(select(length > 0)) ) as $plist
-                | [ .[] | select(.name as $nm | $plist | index($nm)) | .id ]
-              end ) as $pinned
-            | ($recent + $pinned) | unique
-          ')
+          # ---- Reference guard -------------------------------------------------
+          # Before deleting anything, protect every version that a BOM still pins
+          # and (for the BOM itself) every BOM version a consumer repo still uses.
+          # Any read failure aborts the job with nothing deleted.
+          : > "$WORK/protect.txt"
+          echo "$INPUT_PROTECT" | jq -r '.[] | "\(.)\tprotect_versions input"' >> "$WORK/protect.txt"
 
+          # 1) BOM POMs. Every existing BOM release is checked, not only the ones the
+          #    BOM prune will keep: the prunes run in parallel, and a superset is safe.
+          BOM_ALL=$(list_versions "$BOM_PACKAGE")
+          BOM_VERSIONS=$(echo "$BOM_ALL" | jq -r --arg re "$SEMVER_RE" '.[] | .name | select(test($re))' | sort -u)
+          [ -n "$BOM_VERSIONS" ] || fail "No ${BOM_PACKAGE} versions found; cannot verify references"
+
+          for BV in $BOM_VERSIONS; do
+            POM="$WORK/bom-${BV}.pom"
+            CODE=$(curl -sS -L -o "$POM" -w '%{http_code}' -u "x-access-token:${GH_TOKEN}" \
+              "${BOM_POM_BASE}/${BV}/lovablegarden-bom-${BV}.pom") \
+              || fail "Could not download BOM ${BV} POM"
+            if [ "$CODE" = "404" ]; then
+              # Tolerate only a BOM version deleted meanwhile by the parallel BOM prune
+              if list_versions "$BOM_PACKAGE" | jq -e --arg v "$BV" 'any(.[]; .name == $v)' > /dev/null; then
+                fail "BOM ${BV} is listed but its POM returned 404"
+              fi
+              echo "BOM ${BV}: deleted since listing, skipped"
+              continue
+            fi
+            [ "$CODE" = "200" ] || fail "BOM ${BV} POM returned HTTP ${CODE}"
+
+            # Prints "<groupId>.<artifactId> <version>" per managed dependency
+            REFS=$(python3 - "$POM" <<'PY'
+          import re, sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          ns = {"m": root.tag[1:].split("}")[0]} if root.tag.startswith("{") else {"m": ""}
+          p = "m:" if ns["m"] else ""
+
+          def text(el, path):
+              found = el.find(path, ns)
+              return found.text.strip() if found is not None and found.text else None
+
+          props = {"project.version": text(root, p + "version")}
+          for prop in root.findall(p + "properties/*", ns):
+              props[prop.tag.split("}")[-1]] = (prop.text or "").strip()
+
+          def resolve(value):
+              out = re.sub(r"\$\{([^}]+)\}", lambda m: props.get(m.group(1)) or m.group(0), value)
+              if "${" in out:
+                  sys.exit(f"unresolved property in {value!r}")
+              return out
+
+          deps = root.findall(f"{p}dependencyManagement/{p}dependencies/{p}dependency", ns)
+          if not deps:
+              sys.exit("no <dependencyManagement> dependencies found")
+          for dep in deps:
+              group, artifact, version = (text(dep, p + t) for t in ("groupId", "artifactId", "version"))
+              if not (group and artifact and version):
+                  sys.exit(f"incomplete dependency: {group}:{artifact}:{version}")
+              # A timestamped snapshot (1.0.0-20260706.114839-8) lives in package version 1.0.0-SNAPSHOT
+              version = re.sub(r"-\d{8}\.\d{6}-\d+$", "-SNAPSHOT", resolve(version))
+              print(f"{resolve(group)}.{resolve(artifact)} {version}")
+          PY
+            ) || fail "Could not parse BOM ${BV} POM"
+
+            echo "$REFS" | awk -v pkg="$PACKAGE_NAME" -v bv="$BV" \
+              '$1 == pkg { print $2 "\tpinned by BOM " bv }' >> "$WORK/protect.txt"
+          done
+
+          # 2) Consumers of the BOM: lovablegarden-* repos whose default-branch
+          #    gradle.properties sets lovablegardenBomVersion.
+          if [ "$PACKAGE_NAME" = "$BOM_PACKAGE" ]; then
+            REPOS=$(gh api --paginate "/orgs/lovablegarden/repos?per_page=100&type=all" \
+              --jq '.[] | select(.archived | not) | select(.name | startswith("lovablegarden-")) | .name') \
+              || fail "Could not list organisation repositories"
+            [ -n "$REPOS" ] || fail "No lovablegarden-* repositories visible to the app token"
+
+            for REPO in $REPOS; do
+              if ! CONTENT=$(gh api "repos/lovablegarden/${REPO}/contents/gradle.properties" \
+                --jq '.content' 2> "$WORK/err"); then
+                grep -q 'HTTP 404' "$WORK/err" && continue
+                cat "$WORK/err" >&2
+                fail "Could not read ${REPO}/gradle.properties"
+              fi
+              BV=$(printf '%s' "$CONTENT" | base64 -d \
+                | sed -n 's/^[[:space:]]*lovablegardenBomVersion[[:space:]]*[=:][[:space:]]*//p' \
+                | tr -d '\r' | sed 's/[[:space:]]*$//' | tail -1) \
+                || fail "Could not decode ${REPO}/gradle.properties"
+              [ -n "$BV" ] || continue
+              echo "$BV" | grep -qE "$SEMVER_RE" \
+                || fail "${REPO}: lovablegardenBomVersion '${BV}' is not a plain version"
+              printf '%s\tused by %s\n' "$BV" "$REPO" >> "$WORK/protect.txt"
+            done
+          fi
+
+          if [ -s "$WORK/protect.txt" ]; then
+            echo "Protected versions:"
+            sort -u "$WORK/protect.txt" | sed 's/^/  /'
+          fi
+          PROTECT=$(cut -f1 "$WORK/protect.txt" | jq -R -s -c 'split("\n") | map(select(length > 0)) | unique')
+          # ---------------------------------------------------------------------
+
+          KEEP_IDS=$(keep_ids "$PROTECT")
           DELETE_IDS=$(echo "$SORTED" | jq -c --argjson keep "$KEEP_IDS" '
             [ .[] | select(.id as $id | $keep | index($id) | not) | .id ]
           ')
