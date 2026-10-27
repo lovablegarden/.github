@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Fake gh for run-tests.sh: serves fixtures from $FIX, records deletes.
+set -euo pipefail
+echo "gh $*" >> "$FIX/calls.log"
+[ "$1" = api ] || { echo "unexpected gh command: $*" >&2; exit 1; }
+shift
+method=GET jqf='' path=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    -H) shift 2 ;;
+    --method) method=$2; shift 2 ;;
+    --jq) jqf=$2; shift 2 ;;
+    --paginate) shift ;;
+    *) path=$1; shift ;;
+  esac
+done
+out() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
+not_found() { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+
+case $path in
+  /orgs/lovablegarden/packages/maven/*/versions/*)
+    [ "$method" = DELETE ] || { echo "unexpected $method $path" >&2; exit 1; }
+    echo "${path##*/}" >> "$FIX/deleted.log"
+    ;;
+  /orgs/lovablegarden/packages/maven/*/versions\?*)
+    pkg=${path#/orgs/lovablegarden/packages/maven/}; pkg=${pkg%%/*}
+    [ "${path##*page=}" = 1 ] || { echo '[]'; exit 0; }
+    # Second and later listings may differ (simulates a parallel prune)
+    n=$(cat "$FIX/count.$pkg" 2>/dev/null || echo 0); echo $((n + 1)) > "$FIX/count.$pkg"
+    f="$FIX/versions/$pkg.json"
+    if [ "$n" -ge 1 ] && [ -f "$FIX/versions/$pkg.relist.json" ]; then f="$FIX/versions/$pkg.relist.json"; fi
+    [ -f "$f" ] || not_found
+    cat "$f"
+    ;;
+  /orgs/lovablegarden/repos\?*)
+    out < "$FIX/repos.json"
+    ;;
+  repos/lovablegarden/*/contents/gradle.properties)
+    r=${path#repos/lovablegarden/}; r=${r%%/*}
+    if [ -f "$FIX/props/$r.fail" ]; then echo "gh: Server Error (HTTP 500)" >&2; exit 1; fi
+    [ -f "$FIX/props/$r" ] || not_found
+    jq -n --arg c "$(base64 < "$FIX/props/$r")" '{content: $c}' | out
+    ;;
+  *) echo "unexpected gh call: $path" >&2; exit 1 ;;
+esac
