@@ -27,6 +27,11 @@ on:
         required: true
       LOVABLEGARDEN_BOT_APP_ID:
         required: false
+      GH_PACKAGES_TOKEN:
+        # PAT that can read maven.pkg.github.com and consumer repo contents (the
+        # app token is rejected by the Maven registry). Required whenever there is
+        # something to prune; without it the job fails before deleting anything.
+        required: false
   workflow_dispatch:
     inputs:
       package_name:
@@ -64,12 +69,12 @@ jobs:
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
           permission-packages: write
-          # Read consumer gradle.properties for the BOM reference guard
-          permission-contents: read
 
       - name: Prune old Maven versions
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # workflow_call: the caller's secret. workflow_dispatch: this repo's secret.
+          PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
           PACKAGE_NAME: ${{ inputs.package_name }}
           KEEP_COUNT: ${{ inputs.keep_count }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -144,6 +149,9 @@ jobs:
           # Before deleting anything, protect every version that a BOM still pins
           # and (for the BOM itself) every BOM version a consumer repo still uses.
           # Any read failure aborts the job with nothing deleted.
+          # The app token lists and deletes package versions; GH_PACKAGES_TOKEN
+          # reads the Maven registry and consumer repos.
+          [ -n "${PACKAGES_TOKEN:-}" ] || fail "GH_PACKAGES_TOKEN secret not provided; cannot verify references"
           : > "$WORK/protect.txt"
           echo "$INPUT_PROTECT" | jq -r '.[] | "\(.)\tprotect_versions input"' >> "$WORK/protect.txt"
 
@@ -155,7 +163,7 @@ jobs:
 
           for BV in $BOM_VERSIONS; do
             POM="$WORK/bom-${BV}.pom"
-            CODE=$(curl -sS -L -o "$POM" -w '%{http_code}' -u "x-access-token:${GH_TOKEN}" \
+            CODE=$(curl -sS -L -o "$POM" -w '%{http_code}' -u "x-access-token:${PACKAGES_TOKEN}" \
               "${BOM_POM_BASE}/${BV}/lovablegarden-bom-${BV}.pom") \
               || fail "Could not download BOM ${BV} POM"
             if [ "$CODE" = "404" ]; then
@@ -209,20 +217,28 @@ jobs:
           done
 
           # 2) Consumers of the BOM: lovablegarden-* repos whose default-branch
-          #    gradle.properties sets lovablegardenBomVersion.
+          #    gradle.properties sets lovablegardenBomVersion. The repo list comes
+          #    from the app installation; each repo root must then be readable with
+          #    GH_PACKAGES_TOKEN, so a repo it cannot see fails the job instead of
+          #    looking like a non-consumer.
           if [ "$PACKAGE_NAME" = "$BOM_PACKAGE" ]; then
             REPOS=$(gh api --paginate "/orgs/lovablegarden/repos?per_page=100&type=all" \
               --jq '.[] | select(.archived | not) | select(.name | startswith("lovablegarden-")) | .name') \
               || fail "Could not list organisation repositories"
             [ -n "$REPOS" ] || fail "No lovablegarden-* repositories visible to the app token"
 
+            SCANNED=0
             for REPO in $REPOS; do
-              if ! CONTENT=$(gh api "repos/lovablegarden/${REPO}/contents/gradle.properties" \
-                --jq '.content' 2> "$WORK/err"); then
-                grep -q 'HTTP 404' "$WORK/err" && continue
+              if ! ROOT=$(GH_TOKEN="$PACKAGES_TOKEN" gh api "repos/lovablegarden/${REPO}/contents/" \
+                --jq '.[] | select(.type == "file") | .name' 2> "$WORK/err"); then
+                grep -q 'This repository is empty' "$WORK/err" && continue
                 cat "$WORK/err" >&2
-                fail "Could not read ${REPO}/gradle.properties"
+                fail "Could not read ${REPO} with GH_PACKAGES_TOKEN"
               fi
+              SCANNED=$((SCANNED + 1))
+              grep -qxF gradle.properties <<< "$ROOT" || continue
+              CONTENT=$(GH_TOKEN="$PACKAGES_TOKEN" gh api "repos/lovablegarden/${REPO}/contents/gradle.properties" \
+                --jq '.content') || fail "Could not read ${REPO}/gradle.properties"
               BV=$(printf '%s' "$CONTENT" | base64 -d \
                 | sed -n 's/^[[:space:]]*lovablegardenBomVersion[[:space:]]*[=:][[:space:]]*//p' \
                 | tr -d '\r' | sed 's/[[:space:]]*$//' | tail -1) \
@@ -232,6 +248,7 @@ jobs:
                 || fail "${REPO}: lovablegardenBomVersion '${BV}' is not a plain version"
               printf '%s\tused by %s\n' "$BV" "$REPO" >> "$WORK/protect.txt"
             done
+            echo "Scanned ${SCANNED} lovablegarden-* repositories for lovablegardenBomVersion"
           fi
 
           if [ -s "$WORK/protect.txt" ]; then

@@ -18,6 +18,10 @@ out() { if [ -n "$jqf" ]; then jq -r "$jqf"; else cat; fi; }
 not_found() { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
 
 case $path in
+  /orgs/lovablegarden/packages/maven/*|/orgs/lovablegarden/repos\?*)
+    # Package and org APIs use the app token
+    [ "$GH_TOKEN" = "$FAKE_APP_TOKEN" ] || { echo "gh: Bad credentials (HTTP 401)" >&2; exit 1; }
+    ;;&
   /orgs/lovablegarden/packages/maven/*/versions/*)
     [ "$method" = DELETE ] || { echo "unexpected $method $path" >&2; exit 1; }
     echo "${path##*/}" >> "$FIX/deleted.log"
@@ -35,11 +39,22 @@ case $path in
   /orgs/lovablegarden/repos\?*)
     out < "$FIX/repos.json"
     ;;
-  repos/lovablegarden/*/contents/gradle.properties)
+  repos/lovablegarden/*/contents/*)
+    # Repo contents are only readable with the packages PAT
+    [ "$GH_TOKEN" = "$FAKE_PACKAGES_TOKEN" ] || not_found
     r=${path#repos/lovablegarden/}; r=${r%%/*}
-    if [ -f "$FIX/props/$r.fail" ]; then echo "gh: Server Error (HTTP 500)" >&2; exit 1; fi
-    [ -f "$FIX/props/$r" ] || not_found
-    jq -n --arg c "$(base64 < "$FIX/props/$r")" '{content: $c}' | out
+    file=${path#repos/lovablegarden/$r/contents/}
+    [ -f "$FIX/props/$r.noaccess" ] && not_found
+    [ -f "$FIX/props/$r.empty" ] && { echo "gh: This repository is empty. (HTTP 404)" >&2; exit 1; }
+    if [ -z "$file" ]; then
+      { echo README.md; if [ -f "$FIX/props/$r" ]; then echo gradle.properties; fi; } \
+        | jq -R -s 'split("\n") | map(select(length > 0) | {name: ., type: "file"})' | out
+    else
+      [ "$file" = gradle.properties ] || not_found
+      if [ -f "$FIX/props/$r.fail" ]; then echo "gh: Server Error (HTTP 500)" >&2; exit 1; fi
+      [ -f "$FIX/props/$r" ] || not_found
+      jq -n --arg c "$(base64 < "$FIX/props/$r")" '{content: $c}' | out
+    fi
     ;;
   *) echo "unexpected gh call: $path" >&2; exit 1 ;;
 esac

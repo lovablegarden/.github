@@ -18,6 +18,7 @@ SCRIPT=$(mktemp)
 awk '/^        run: \|$/ { on = 1; next } on { print substr($0, 11) }' "$WORKFLOW" > "$SCRIPT"
 grep -q 'Reference guard' "$SCRIPT" || { echo "could not extract run block" >&2; exit 1; }
 
+export FAKE_APP_TOKEN=app-token FAKE_PACKAGES_TOKEN=packages-pat
 PASS=0 FAILED=0
 ID=0
 
@@ -59,6 +60,7 @@ baseline() {
   mkdir -p "$FIX/versions" "$FIX/poms" "$FIX/props"
   : > "$FIX/deleted.log"
   : > "$FIX/calls.log"
+  PACKAGES_TOKEN=$FAKE_PACKAGES_TOKEN
 
   versions "$BOM" \
     1.0.5@2026-10-24T18:00:00Z \
@@ -104,7 +106,8 @@ baseline() {
 # run <package> [dry_run] -> sets OUT and RC
 run() {
   set +e
-  OUT=$(PATH="$HERE/stubs:$PATH" GH_TOKEN=fake PACKAGE_NAME=$1 KEEP_COUNT=3 \
+  OUT=$(PATH="$HERE/stubs:$PATH" GH_TOKEN=$FAKE_APP_TOKEN PACKAGES_TOKEN=$PACKAGES_TOKEN \
+    PACKAGE_NAME=$1 KEEP_COUNT=3 \
     DRY_RUN=${2:-false} PROTECT_VERSIONS=${3:-} bash "$SCRIPT" 2>&1)
   RC=$?
   set -e
@@ -242,6 +245,37 @@ printf 'lovablegardenBomVersion=${bom}\n' > "$FIX/props/lovablegarden-tasks"
 run "$BOM"
 check 'exit 1' rc 1
 check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: GH_PACKAGES_TOKEN missing'
+baseline
+PACKAGES_TOKEN=''
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::GH_PACKAGES_TOKEN secret not provided; cannot verify references'
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: registry rejects the token (HTTP 401)'
+baseline
+PACKAGES_TOKEN=wrong-token
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: consumer repo not readable with GH_PACKAGES_TOKEN'
+baseline
+touch "$FIX/props/lovablegarden-tasks.noaccess"
+run "$BOM"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::Could not read lovablegarden-tasks with GH_PACKAGES_TOKEN'
+check 'nothing deleted' deleted_ids ''
+
+CASE='bom: empty repo is skipped'
+baseline
+touch "$FIX/props/lovablegarden-auth.empty"
+run "$BOM"
+check 'exit 0' rc 0
+check 'KEEP 1.0.1' keeps 1.0.1
+check 'scan count logged' has 'Scanned 3 lovablegarden-* repositories for lovablegardenBomVersion'
 
 echo "${PASS} passed, ${FAILED} failed"
 [ "$FAILED" -eq 0 ]
