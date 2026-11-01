@@ -52,6 +52,65 @@ jobs:
                "https://maven.pkg.github.com/gardentalkz/gardentalkz-openapi-spec/se/gardentalkz/api/gardentalkz-api-auth/1.0.0/gardentalkz-api-auth-1.0.0.pom" \
                || echo "Failed to access Maven artifact"
 
+      - name: Check API client versions come from the BOM
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          # Package retention only protects API client versions that a BOM pins
+          # (LG-1378). A version declared in the service itself can be pruned and
+          # break the build, so clients the BOM manages must be declared without one.
+          if [ ! -f gradle.properties ] || ! grep -q '^lovablegardenBomVersion=' gradle.properties; then
+            echo "No lovablegardenBomVersion in gradle.properties — skipping API client check"
+            exit 0
+          fi
+          BOM_VERSION=$(grep '^lovablegardenBomVersion=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')
+          POM="${RUNNER_TEMP}/lovablegarden-bom-${BOM_VERSION}.pom"
+          curl -fsSL -u "${GITHUB_ACTOR}:${GH_PACKAGE_TOKEN}" -o "$POM" \
+            "https://maven.pkg.github.com/lovablegarden/lovablegarden-security-common/com/lovablegarden/lovablegarden-bom/${BOM_VERSION}/lovablegarden-bom-${BOM_VERSION}.pom"
+
+          # One artifactId per line: the se.lovablegarden.api clients this BOM pins
+          export BOM_MANAGED_API_FILE="${RUNNER_TEMP}/bom-managed-api.txt"
+          python3 - "$POM" > "$BOM_MANAGED_API_FILE" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          ns = {"m": root.tag[1:].split("}")[0]} if root.tag.startswith("{") else {"m": ""}
+          p = "m:" if ns["m"] else ""
+          for dep in root.findall(f"{p}dependencyManagement/{p}dependencies/{p}dependency", ns):
+              if dep.findtext(p + "groupId", namespaces=ns) == "se.lovablegarden.api":
+                  print(dep.findtext(p + "artifactId", namespaces=ns))
+          PY
+          echo "API clients managed by lovablegarden-bom ${BOM_VERSION}: $(paste -sd ' ' "$BOM_MANAGED_API_FILE")"
+          [ -s "$BOM_MANAGED_API_FILE" ] || exit 0
+
+          INIT="${RUNNER_TEMP}/bom-managed-api-check.gradle"
+          cat > "$INIT" <<'GRADLE'
+          def managed = new File(System.getenv('BOM_MANAGED_API_FILE')).readLines()*.trim().findAll { it } as Set
+          gradle.projectsEvaluated { g ->
+              def offending = []
+              g.rootProject.allprojects { p ->
+                  p.configurations.each { c ->
+                      (c.dependencies.toList() + c.dependencyConstraints.toList()).each { d ->
+                          if (d.group == 'se.lovablegarden.api' && managed.contains(d.name) && d.version) {
+                              offending << "${p.displayName} (${c.name}): ${d.group}:${d.name}:${d.version}"
+                          }
+                      }
+                  }
+              }
+              if (offending) {
+                  throw new GradleException(
+                      "These API clients are managed by lovablegarden-bom; remove the version so the BOM sets it " +
+                      "(versions pinned outside the BOM get pruned by package retention, LG-1378):\n  " +
+                      offending.unique().join('\n  '))
+              }
+          }
+          GRADLE
+          ./gradlew help --no-daemon -q -I "$INIT" > /dev/null
+          echo "All BOM-managed API clients take their version from lovablegarden-bom ${BOM_VERSION}"
+
       - name: Build with Gradle
         env:
           CI: true
