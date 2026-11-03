@@ -17,6 +17,8 @@ SCRIPT=$(mktemp)
 # The step's run block is the last block in the file, indented 10 spaces
 awk '/^        run: \|$/ { on = 1; next } on { print substr($0, 11) }' "$WORKFLOW" > "$SCRIPT"
 grep -q 'Reference guard' "$SCRIPT" || { echo "could not extract run block" >&2; exit 1; }
+# Actions would read "${{" in the run block as an expression and reject the workflow
+! grep -qF '${{' "$SCRIPT" || { echo 'run block contains "${{"' >&2; exit 1; }
 
 export FAKE_APP_TOKEN=app-token FAKE_PACKAGES_TOKEN=packages-pat
 PASS=0 FAILED=0
@@ -50,6 +52,12 @@ pom() {
     echo '  </dependencies></dependencyManagement>'
     echo '</project>'
   } > "$FIX/poms/$v.pom"
+}
+
+# src <repo> <path> -> writes stdin to a build file in that repo's default branch
+src() {
+  mkdir -p "$FIX/src/$1/$(dirname "$2")"
+  cat > "$FIX/src/$1/$2"
 }
 
 # Incident state of 2026-10-25: old BOMs pin api-plants 1.0.0-SNAPSHOT (1.0.3 as a
@@ -101,6 +109,16 @@ baseline() {
   printf 'version=0.1.0\n' > "$FIX/props/lovablegarden-audit"
   printf 'lovablegardenBomVersion=1.0.2\n' > "$FIX/props/lovablegarden-old"
   printf 'lovablegardenBomVersion=1.0.2\n' > "$FIX/props/other-repo"
+  # Today's form: the client version comes from the BOM
+  src lovablegarden-tasks build.gradle <<'GRADLE'
+repositories {
+    maven { url = uri("https://maven.pkg.github.com/lovablegarden/lovablegarden-api-plants") }
+}
+dependencies {
+    implementation platform("com.lovablegarden:lovablegarden-bom:${lovablegardenBomVersion}")
+    implementation 'se.lovablegarden.api:lovablegarden-api-plants'
+}
+GRADLE
 }
 
 # run <package> [dry_run] -> sets OUT and RC
@@ -276,6 +294,147 @@ run "$BOM"
 check 'exit 0' rc 0
 check 'KEEP 1.0.1' keeps 1.0.1
 check 'scan count logged' has 'Scanned 3 lovablegarden-* repositories for lovablegardenBomVersion'
+
+CASE='client: no direct pins, only BOM-managed use'
+baseline
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'scan count logged' has 'Scanned 4 lovablegarden-* repositories for direct lovablegarden-api-plants pins'
+check 'no direct pin protected' bash -c '! grep -q "pinned in" <<< "$0"' "$OUT"
+
+CASE='client: old version pinned directly in build.gradle survives (LG-1378)'
+baseline
+src lovablegarden-audit build.gradle <<'GRADLE'
+dependencies {
+    implementation 'se.lovablegarden.api:lovablegarden-api-plants:2.0.0'
+}
+GRADLE
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'KEEP 2.0.0' keeps 2.0.0
+check 'reason logged' has '  2.0.0 pinned in lovablegarden-audit/build.gradle:2'
+check 'nothing deleted' deleted_ids ''
+
+CASE='client: direct pin is kept in a dry run too'
+baseline
+echo "implementation 'se.lovablegarden.api:lovablegarden-api-plants:2.0.0'" | src lovablegarden-audit build.gradle
+run "$PLANTS" true
+check 'exit 0' rc 0
+check 'KEEP 2.0.0' keeps 2.0.0
+check 'nothing deleted' deleted_ids ''
+
+CASE='client: version from gradle.properties, def variable and Kotlin val'
+baseline
+printf 'version=0.1.0\nplantsApi=2.0.0\n' > "$FIX/props/lovablegarden-audit"
+echo 'implementation "se.lovablegarden.api:lovablegarden-api-plants:${plantsApi}"' | src lovablegarden-audit build.gradle
+src lovablegarden-auth sub/build.gradle.kts <<'GRADLE'
+val plantsClient = "3.0.0"
+dependencies { implementation("se.lovablegarden.api:lovablegarden-api-plants:$plantsClient") }
+GRADLE
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'gradle.properties resolved' has '  2.0.0 pinned in lovablegarden-audit/build.gradle:1'
+check 'Kotlin val resolved' has '  3.0.0 pinned in lovablegarden-auth/sub/build.gradle.kts:2'
+check 'KEEP 2.0.0' keeps 2.0.0
+check 'nothing deleted' deleted_ids ''
+
+CASE='client: version catalog (version.ref and inline)'
+baseline
+src lovablegarden-audit gradle/libs.versions.toml <<'TOML'
+[versions]
+plants = "2.0.0"
+
+[libraries]
+plants-api = { module = "se.lovablegarden.api:lovablegarden-api-plants", version.ref = "plants" }
+TOML
+src lovablegarden-auth gradle/libs.versions.toml <<'TOML'
+[libraries]
+plants-api = { group = "se.lovablegarden.api", name = "lovablegarden-api-plants", version = "3.0.0" }
+plants-bom = { module = "se.lovablegarden.api:lovablegarden-api-plants" }
+TOML
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'version.ref resolved' has '  2.0.0 pinned in lovablegarden-audit/gradle/libs.versions.toml:5'
+check 'inline version read' has '  3.0.0 pinned in lovablegarden-auth/gradle/libs.versions.toml:2'
+check 'nothing deleted' deleted_ids ''
+
+CASE='client: pin in a conditional block counts, a commented-out pin does not'
+baseline
+src lovablegarden-audit build.gradle <<'GRADLE'
+if (project.hasProperty('usePublishedOpenApiModels')) {
+    implementation(group: 'se.lovablegarden.api', name: 'lovablegarden-api-plants', version: '3.0.0') {
+        exclude group: 'org.openapitools'
+    }
+}
+// implementation 'se.lovablegarden.api:lovablegarden-api-plants:2.0.0'
+/* implementation 'se.lovablegarden.api:lovablegarden-api-plants:2.0.0' */
+GRADLE
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'map notation read' has '  3.0.0 pinned in lovablegarden-audit/build.gradle:2'
+check 'DELETE 2.0.0' deletes 2.0.0
+check 'only 2.0.0 deleted' deleted_ids "$(id_of "$PLANTS" 2.0.0)"
+
+CASE='client: another client pinned at the same version does not protect it'
+baseline
+src lovablegarden-audit build.gradle <<'GRADLE'
+implementation 'se.lovablegarden.api:lovablegarden-api-media:2.0.0'
+implementation 'se.lovablegarden.api:lovablegarden-api-plants-extra:2.0.0'
+GRADLE
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'DELETE 2.0.0' deletes 2.0.0
+
+CASE='fail closed: direct pin version cannot be resolved'
+baseline
+echo 'implementation "se.lovablegarden.api:lovablegarden-api-plants:${somewhereElse}"' | src lovablegarden-audit build.gradle
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::lovablegarden-audit/build.gradle:1: cannot resolve ${somewhereElse} in '"'"'${somewhereElse}'"'"
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: direct pin built by string concatenation'
+baseline
+echo "implementation 'se.lovablegarden.api:lovablegarden-api-plants:' + v" | src lovablegarden-audit build.gradle
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: dynamic version range'
+baseline
+echo "implementation 'se.lovablegarden.api:lovablegarden-api-plants:[2.0,4.0)'" | src lovablegarden-audit build.gradle
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: repo file tree truncated'
+baseline
+touch "$FIX/src/lovablegarden-tasks.truncated"
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::lovablegarden-tasks: file tree too large to list'
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: client prune cannot read a repo with GH_PACKAGES_TOKEN'
+baseline
+touch "$FIX/props/lovablegarden-audit.noaccess"
+run "$PLANTS"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::Could not read lovablegarden-audit with GH_PACKAGES_TOKEN'
+check 'nothing deleted' deleted_ids ''
+
+CASE='client: empty repo is skipped'
+baseline
+touch "$FIX/props/lovablegarden-auth.empty"
+run "$PLANTS"
+check 'exit 0' rc 0
+check 'scan count logged' has 'Scanned 3 lovablegarden-* repositories for direct lovablegarden-api-plants pins'
+
+CASE='non-client package: no build file scan'
+baseline
+run "$SECURITY"
+check 'exit 0' rc 0
+check 'no tree listing' bash -c '! grep -q "git/trees" "$0"' "$FIX/calls.log"
 
 echo "${PASS} passed, ${FAILED} failed"
 [ "$FAILED" -eq 0 ]

@@ -1,0 +1,27 @@
+name: Test package retention
+
+# Runs the prune-maven-package.yml guard against fake gh/curl and fixtures.
+# Nothing real is listed or deleted.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/prune-maven-package.yml'
+      - '.github/workflows/test-package-retention.yml'
+      - 'tests/prune-maven-package/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/prune-maven-package.yml'
+      - '.github/workflows/test-package-retention.yml'
+      - 'tests/prune-maven-package/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run prune-maven-package tests
+        run: tests/prune-maven-package/run-tests.sh

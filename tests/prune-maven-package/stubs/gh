@@ -39,6 +39,19 @@ case $path in
   /orgs/lovablegarden/repos\?*)
     out < "$FIX/repos.json"
     ;;
+  repos/lovablegarden/*/git/trees/*)
+    # Same access rules as contents; lists gradle.properties plus $FIX/src/<repo>
+    [ "$GH_TOKEN" = "$FAKE_PACKAGES_TOKEN" ] || not_found
+    r=${path#repos/lovablegarden/}; r=${r%%/*}
+    [ -f "$FIX/props/$r.noaccess" ] && not_found
+    [ -f "$FIX/props/$r.empty" ] && { echo "gh: Git Repository is empty. (HTTP 409)" >&2; exit 1; }
+    truncated=false
+    [ -f "$FIX/src/$r.truncated" ] && truncated=true
+    { if [ -f "$FIX/props/$r" ]; then echo gradle.properties; fi
+      if [ -d "$FIX/src/$r" ]; then (cd "$FIX/src/$r" && find . -type f | sed 's|^\./||'); fi; } \
+      | jq -R -s --argjson t "$truncated" \
+        '{truncated: $t, tree: (split("\n") | map(select(length > 0) | {path: ., type: "blob"}))}' | out
+    ;;
   repos/lovablegarden/*/contents/*)
     # Repo contents are only readable with the packages PAT
     [ "$GH_TOKEN" = "$FAKE_PACKAGES_TOKEN" ] || not_found
@@ -49,8 +62,10 @@ case $path in
     if [ -z "$file" ]; then
       { echo README.md; if [ -f "$FIX/props/$r" ]; then echo gradle.properties; fi; } \
         | jq -R -s 'split("\n") | map(select(length > 0) | {name: ., type: "file"})' | out
+    elif [ "$file" != gradle.properties ]; then
+      [ -f "$FIX/src/$r/$file" ] || not_found
+      jq -n --arg c "$(base64 < "$FIX/src/$r/$file")" '{content: $c}' | out
     else
-      [ "$file" = gradle.properties ] || not_found
       if [ -f "$FIX/props/$r.fail" ]; then echo "gh: Server Error (HTTP 500)" >&2; exit 1; fi
       [ -f "$FIX/props/$r" ] || not_found
       jq -n --arg c "$(base64 < "$FIX/props/$r")" '{content: $c}' | out

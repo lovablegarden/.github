@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; BOM-referenced versions are always kept)'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept)'
         required: false
         type: number
         default: 3
@@ -39,7 +39,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; BOM-referenced versions are always kept)'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept)'
         required: false
         type: number
         default: 3
@@ -146,8 +146,9 @@ jobs:
           fi
 
           # ---- Reference guard -------------------------------------------------
-          # Before deleting anything, protect every version that a BOM still pins
-          # and (for the BOM itself) every BOM version a consumer repo still uses.
+          # Before deleting anything, protect every version that a BOM still pins,
+          # (for the BOM itself) every BOM version a consumer repo still uses, and
+          # (for an API client) every version a repo's build files pin directly.
           # Any read failure aborts the job with nothing deleted.
           # The app token lists and deletes package versions; GH_PACKAGES_TOKEN
           # reads the Maven registry and consumer repos.
@@ -221,12 +222,17 @@ jobs:
           #    from the app installation; each repo root must then be readable with
           #    GH_PACKAGES_TOKEN, so a repo it cannot see fails the job instead of
           #    looking like a non-consumer.
-          if [ "$PACKAGE_NAME" = "$BOM_PACKAGE" ]; then
+          #    Steps 2 and 3 share the repo list.
+          API_GROUP='se.lovablegarden.api'
+          REPOS=''
+          if [ "$PACKAGE_NAME" = "$BOM_PACKAGE" ] || [[ "$PACKAGE_NAME" == "${API_GROUP}."* ]]; then
             REPOS=$(gh api --paginate "/orgs/lovablegarden/repos?per_page=100&type=all" \
               --jq '.[] | select(.archived | not) | select(.name | startswith("lovablegarden-")) | .name') \
               || fail "Could not list organisation repositories"
             [ -n "$REPOS" ] || fail "No lovablegarden-* repositories visible to the app token"
+          fi
 
+          if [ "$PACKAGE_NAME" = "$BOM_PACKAGE" ]; then
             SCANNED=0
             for REPO in $REPOS; do
               if ! ROOT=$(GH_TOKEN="$PACKAGES_TOKEN" gh api "repos/lovablegarden/${REPO}/contents/" \
@@ -249,6 +255,171 @@ jobs:
               printf '%s\tused by %s\n' "$BV" "$REPO" >> "$WORK/protect.txt"
             done
             echo "Scanned ${SCANNED} lovablegarden-* repositories for lovablegardenBomVersion"
+          fi
+
+          # 3) Direct pins of an API client: every version a lovablegarden-* repo's
+          #    default branch sets for it in a Gradle build file or version catalog
+          #    (e.g. 'se.lovablegarden.api:lovablegarden-api-tasks:5.2.0'). Text is
+          #    scanned, so pins inside conditional blocks count; comments don't.
+          #    Versions from gradle.properties, def/val/ext variables and catalog
+          #    version refs are resolved; a version it cannot read fails the job.
+          if [[ "$PACKAGE_NAME" == "${API_GROUP}."* ]]; then
+            ARTIFACT=${PACKAGE_NAME#"${API_GROUP}."}
+            SRC="$WORK/src"
+            SCANNED=0
+            for REPO in $REPOS; do
+              if ! TREE=$(GH_TOKEN="$PACKAGES_TOKEN" gh api "repos/lovablegarden/${REPO}/git/trees/HEAD?recursive=1" \
+                2> "$WORK/err"); then
+                grep -q 'Git Repository is empty' "$WORK/err" && continue
+                cat "$WORK/err" >&2
+                fail "Could not read ${REPO} with GH_PACKAGES_TOKEN"
+              fi
+              SCANNED=$((SCANNED + 1))
+              [ "$(echo "$TREE" | jq '.truncated')" = false ] || fail "${REPO}: file tree too large to list"
+              BUILD_FILES=$(echo "$TREE" | jq -r '.tree[] | select(.type == "blob") | .path
+                | select(test("(^|/)((build|settings)\\.gradle(\\.kts)?|gradle\\.properties|[^/]+\\.versions\\.toml)$"))')
+              while IFS= read -r FILE; do
+                [ -n "$FILE" ] || continue
+                mkdir -p "$SRC/$REPO/$(dirname "$FILE")"
+                CONTENT=$(GH_TOKEN="$PACKAGES_TOKEN" gh api "repos/lovablegarden/${REPO}/contents/${FILE}" \
+                  --jq '.content') || fail "Could not read ${REPO}/${FILE}"
+                printf '%s' "$CONTENT" | base64 -d > "$SRC/$REPO/$FILE" || fail "Could not decode ${REPO}/${FILE}"
+              done <<< "$BUILD_FILES"
+            done
+            echo "Scanned ${SCANNED} lovablegarden-* repositories for direct ${ARTIFACT} pins"
+
+            if [ -d "$SRC" ]; then
+              # Prints "<version>\tpinned in <repo>/<file>:<line>" per direct pin
+              cat > "$WORK/direct-pins.py" <<'PY'
+          import re, sys
+          from pathlib import Path
+
+          group, artifact, src, semver = sys.argv[1], sys.argv[2], Path(sys.argv[3]), sys.argv[4]
+          coord = re.escape(f"{group}:{artifact}")
+          errors = []
+          Q = "[\"']"
+
+          def strip_comments(text):
+              # Blank out comments but keep line numbers; "//" inside URLs is left alone
+              text = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+              return re.sub(r"(^|[\s;{}(])//[^\n]*", r"\1", text, flags=re.M)
+
+          def props_file(path):
+              props = {}
+              for line in path.read_text(errors="replace").splitlines():
+                  m = re.match(r"\s*([A-Za-z0-9_.-]+)\s*[=:]\s*(.*?)\s*$", line)
+                  if m and not line.lstrip().startswith(("#", "!")):
+                      props[m.group(1)] = m.group(2)
+              return props
+
+          def assignments(text):
+              # def x = '1.0' / val x = "1.0" / ext.x = '1.0' / x = '1.0' (in ext { }) / set("x", "1.0")
+              found = {}
+              for m in re.finditer(rf"(?:\b(?:def|val|var|String)\s+|\bext\.|\bextra\.)?\b([A-Za-z_]\w*)\s*=\s*{Q}([^\"'$]+){Q}", text):
+                  found.setdefault(m.group(1), m.group(2))
+              for m in re.finditer(rf"\bset\(\s*{Q}(\w+){Q}\s*,\s*{Q}([^\"'$]+){Q}\s*\)", text):
+                  found.setdefault(m.group(1), m.group(2))
+              return found
+
+          def resolve(value, lookup, where):
+              def sub(m):
+                  name = m.group(1) or m.group(2)
+                  name = re.sub(r"^(?:project|rootProject)\.(?:ext\.)?", "", name)
+                  if name in lookup:
+                      return lookup[name]
+                  errors.append(f"{where}: cannot resolve {m.group(0)} in {value!r}")
+                  return m.group(0)
+              out = re.sub(r"\$\{([\w.]+)\}|\$([A-Za-z_]\w*)", sub, value)
+              out = re.sub(r"(@\w+|!!)$", "", out.strip())
+              out = re.sub(r"-\d{8}\.\d{6}-\d+$", "-SNAPSHOT", out)
+              if "$" not in out and not re.match(semver, out):
+                  errors.append(f"{where}: {artifact} version {value!r} is not a plain version")
+              return out
+
+          def line_of(text, pos):
+              return text.count("\n", 0, pos) + 1
+
+          for repo_dir in sorted(p for p in src.iterdir() if p.is_dir()):
+              repo = repo_dir.name
+              files = sorted(p for p in repo_dir.rglob("*") if p.is_file())
+              root_props = repo_dir / "gradle.properties"
+              props = props_file(root_props) if root_props.exists() else {}
+              catalog_versions = {}
+              for f in files:
+                  if f.name.endswith(".versions.toml"):
+                      section = None
+                      for line in f.read_text(errors="replace").splitlines():
+                          m = re.match(r"\s*\[([^\]]+)\]", line)
+                          if m:
+                              section = m.group(1).strip()
+                          elif section == "versions":
+                              m = re.match(r'\s*([\w.-]+)\s*=\s*(?:"([^"]+)"|\{[^}]*?(?:strictly|require|prefer)\s*=\s*"([^"]+)")', line)
+                              if m:
+                                  catalog_versions[m.group(1)] = m.group(2) or m.group(3)
+
+              for f in files:
+                  rel = f"{repo}/{f.relative_to(repo_dir)}"
+                  text = f.read_text(errors="replace")
+                  pins = []  # (line, raw version, lookup)
+                  if f.name.endswith(".versions.toml"):
+                      for n, line in enumerate(text.splitlines(), 1):
+                          line = re.sub(r"\s#.*$", "", line)
+                          names_it = re.search(rf'"{coord}(?::([^"]*))?"', line) or (
+                              re.search(rf'\bgroup\s*=\s*"{re.escape(group)}"', line)
+                              and re.search(rf'\bname\s*=\s*"{re.escape(artifact)}"', line))
+                          if not names_it:
+                              continue
+                          m = re.search(rf'"{coord}:([^"]+)"', line)
+                          ref = re.search(r'version\.ref\s*=\s*"([^"]+)"|version\s*=\s*\{\s*ref\s*=\s*"([^"]+)"', line)
+                          ver = re.search(r'version\s*=\s*(?:"([^"]+)"|\{[^}]*?(?:strictly|require|prefer)\s*=\s*"([^"]+)")', line)
+                          if m:
+                              pins.append((n, m.group(1), {}))
+                          elif ref:
+                              key = ref.group(1) or ref.group(2)
+                              if key not in catalog_versions:
+                                  errors.append(f"{rel}:{n}: version.ref {key!r} not in [versions]")
+                              else:
+                                  pins.append((n, catalog_versions[key], {}))
+                          elif ver:
+                              pins.append((n, ver.group(1) or ver.group(2), {}))
+                          elif "version" in line:
+                              errors.append(f"{rel}:{n}: cannot read the {artifact} version")
+                  elif f.name == "gradle.properties":
+                      continue
+                  else:
+                      code = strip_comments(text)
+                      local = props_file(f.parent / "gradle.properties") if (f.parent / "gradle.properties").exists() else {}
+                      lookup = {**props, **local, **assignments(code)}
+                      for m in re.finditer(rf"{Q}{coord}:", code):
+                          v = re.match(r"([^\"'\s]*)[\"']", code[m.end():])
+                          if not v or not v.group(1):
+                              errors.append(f"{rel}:{line_of(code, m.start())}: cannot read the {artifact} version")
+                          else:
+                              pins.append((line_of(code, m.start()), v.group(1), lookup))
+                      # group: 'x', name: 'y', version: 'z' (Groovy map) / group = "x", name = "y", version = "z" (Kotlin)
+                      for m in re.finditer(rf"\bgroup\s*[:=]\s*{Q}{re.escape(group)}{Q}\s*,\s*name\s*[:=]\s*{Q}{re.escape(artifact)}{Q}([^\n)]*)", code):
+                          rest = m.group(1)
+                          if not re.search(r"\bversion\s*[:=]", rest):
+                              continue
+                          v = re.search(rf"\bversion\s*[:=]\s*(?:{Q}([^\"']+){Q}|([A-Za-z_][\w.]*))", rest)
+                          if not v:
+                              errors.append(f"{rel}:{line_of(code, m.start())}: cannot read the {artifact} version")
+                          else:
+                              raw = v.group(1) if v.group(1) is not None else "${" + v.group(2) + "}"
+                              pins.append((line_of(code, m.start()), raw, lookup))
+                  for n, raw, lookup in pins:
+                      version = resolve(raw, lookup, f"{rel}:{n}")
+                      if "$" not in version and re.match(semver, version):
+                          print(f"{version}\tpinned in {rel}:{n}")
+
+          if errors:
+              for e in errors:
+                  print(f"::error::{e}", file=sys.stderr)
+              sys.exit(1)
+          PY
+              python3 "$WORK/direct-pins.py" "$API_GROUP" "$ARTIFACT" "$SRC" "$SEMVER_RE" >> "$WORK/protect.txt" \
+                || fail "Could not read every ${ARTIFACT} version pinned in a build file"
+            fi
           fi
 
           if [ -s "$WORK/protect.txt" ]; then
