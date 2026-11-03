@@ -17,6 +17,8 @@ SCRIPT=$(mktemp)
 # The step's run block is the last block in the file, indented 10 spaces
 awk '/^        run: \|$/ { on = 1; next } on { print substr($0, 11) }' "$WORKFLOW" > "$SCRIPT"
 grep -q 'Reference guard' "$SCRIPT" || { echo "could not extract run block" >&2; exit 1; }
+# Actions would read "${{" in the run block as an expression and reject the workflow
+! grep -qF '${{' "$SCRIPT" || { echo 'run block contains "${{"' >&2; exit 1; }
 
 export FAKE_APP_TOKEN=app-token FAKE_PACKAGES_TOKEN=packages-pat
 PASS=0 FAILED=0

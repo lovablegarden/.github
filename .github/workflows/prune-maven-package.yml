@@ -327,7 +327,7 @@ jobs:
                   name = re.sub(r"^(?:project|rootProject)\.(?:ext\.)?", "", name)
                   if name in lookup:
                       return lookup[name]
-                  errors.append(f"{where}: cannot resolve ${{{name}}} in {value!r}")
+                  errors.append(f"{where}: cannot resolve {m.group(0)} in {value!r}")
                   return m.group(0)
               out = re.sub(r"\$\{([\w.]+)\}|\$([A-Za-z_]\w*)", sub, value)
               out = re.sub(r"(@\w+|!!)$", "", out.strip())
