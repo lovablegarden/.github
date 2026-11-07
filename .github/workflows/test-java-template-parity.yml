@@ -1,0 +1,29 @@
+name: Test Java template parity
+
+# Fails when java-25-gradle-*.yml is not java-21-gradle-*.yml with only the
+# JDK version changed. Regenerate with tests/java-template-parity/check.sh --write.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/java-21-gradle-*.yml'
+      - '.github/workflows/java-25-gradle-*.yml'
+      - '.github/workflows/test-java-template-parity.yml'
+      - 'tests/java-template-parity/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/java-21-gradle-*.yml'
+      - '.github/workflows/java-25-gradle-*.yml'
+      - '.github/workflows/test-java-template-parity.yml'
+      - 'tests/java-template-parity/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check java-25 templates match java-21
+        run: tests/java-template-parity/check.sh
