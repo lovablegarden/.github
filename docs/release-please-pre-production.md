@@ -32,3 +32,19 @@ Standard semver after launch:
 | `feat:` | minor |
 | `fix:` | patch |
 | `BREAKING CHANGE` / `feat!:` | major |
+
+## Gated release and auto-merge (LG-1219)
+
+Every repo runs release-please through [`gated-release.yml`](../.github/workflows/gated-release.yml),
+called from its own `.github/workflows/release-please.yml`
+([caller template](../templates/gated-release-caller.yml)):
+
+- release-please runs only when the repo's required checks passed on the current `main` commit;
+- lovablegarden-bot `bump/*` PRs are retitled `fix(deps): …` and, like release PRs, squash-merged
+  once the required checks pass on them;
+- a release PR waits while `main` has a releasable commit it doesn't include yet (race guard).
+
+Releasable: `fix:` (including the bot's `fix(deps):` bumps), `feat:`, `perf:`, `revert:`, or any
+commit with a `Release-As:` footer. `chore`/`docs`/`ci`/`build`/`refactor`/`test` ride along in the
+next release. Logic: `scripts/release/`, tests: `tests/gated-release/run-tests.sh`.
+Full flow: `lovablegarden-system/docs/pipelines/release-flow.md` ("Org-wide gated release").

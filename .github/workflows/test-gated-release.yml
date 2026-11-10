@@ -1,0 +1,40 @@
+name: Test gated release
+
+# Runs scripts/release/ against a stub gh, and actionlint on the gated-release workflow and its
+# caller template. Nothing real is merged or released.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gated-release.yml'
+      - '.github/workflows/test-gated-release.yml'
+      - 'scripts/release/**'
+      - 'templates/gated-release-caller.yml'
+      - 'tests/gated-release/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/gated-release.yml'
+      - '.github/workflows/test-gated-release.yml'
+      - 'scripts/release/**'
+      - 'templates/gated-release-caller.yml'
+      - 'tests/gated-release/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Script tests
+        run: tests/gated-release/run-tests.sh
+
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          mkdir -p "$RUNNER_TEMP/caller/.github/workflows"
+          cp templates/gated-release-caller.yml "$RUNNER_TEMP/caller/.github/workflows/release-please.yml"
+          ./actionlint -color .github/workflows/gated-release.yml .github/workflows/test-gated-release.yml
+          ./actionlint -color "$RUNNER_TEMP/caller/.github/workflows/release-please.yml"

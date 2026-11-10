@@ -1,0 +1,223 @@
+# Gated release with bot PR auto-merge (LG-1219). One caller per repo turns a merged fix into a
+# GitHub Release with nobody touching it:
+#
+#   fix:/feat:/perf:/revert: commit (or a Release-As: footer) lands on main
+#     → required checks pass on main → `release` job runs release-please → release PR opens/updates
+#     → required checks pass on the release PR → `merge` job squash-merges it
+#     → required checks pass on main → release-please tags it and publishes the GitHub Release
+#     → the repo's own release-published.yml publishes and opens the downstream bump PR.
+#   bump/* PRs from lovablegarden-bot are retitled `fix(deps): …` and merged the same way.
+#
+# Flow, rules and safety properties: lovablegarden-system docs/pipelines/release-flow.md
+# ("Org-wide gated release"). Caller template: templates/gated-release-caller.yml.
+#
+# The caller must trigger on:
+#   workflow_run (completed) of every workflow that owns a required check, without a branch filter
+#     (PR runs drive the merge, main push runs drive the release),
+#   pull_request_target (opened, reopened, edited) on main (retitles bumps), and workflow_dispatch.
+# and grant contents: write, pull-requests: write, checks: read.
+name: Gated release
+
+on:
+  workflow_call:
+    inputs:
+      required-checks:
+        description: >-
+          Newline-separated check-run names that must pass, as shown on a commit
+          (a job in a called workflow shows as "<caller job id> / <job name>").
+        required: true
+        type: string
+      bump-files:
+        description: ERE that every file in a bot bump/* PR must match
+        required: false
+        default: '^gradle\.properties$'
+        type: string
+      release-files:
+        description: ERE that every file in a release PR must match
+        required: false
+        default: '^(CHANGELOG\.md|\.github/\.release-please-manifest\.json|gradle\.properties)$'
+        type: string
+      component-paths:
+        description: >-
+          Repos with several release-please components only: lines of `<component>=<ERE>`
+          (see scripts/release/merge-bot-pr.sh). Leave empty for one component.
+        required: false
+        default: ''
+        type: string
+      config-file:
+        description: Path to release-please config JSON
+        required: false
+        default: .github/release-please-config.json
+        type: string
+      manifest-file:
+        description: Path to release-please manifest JSON
+        required: false
+        default: .github/.release-please-manifest.json
+        type: string
+      scripts-ref:
+        description: lovablegarden/.github ref to take scripts/release/ from
+        required: false
+        default: main
+        type: string
+    secrets:
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        required: true
+      LOVABLEGARDEN_BOT_APP_ID:
+        description: Optional if org variable LOVABLEGARDEN_BOT_APP_ID is set
+        required: false
+    outputs:
+      releases_created:
+        description: 'true when this run created a GitHub Release'
+        value: ${{ jobs.release.outputs.releases_created }}
+
+permissions: {}
+
+jobs:
+  # Show bot bumps as what they will merge as, so a hand merge also releases.
+  # pull_request_target runs the caller from main and nothing here checks out the PR's code.
+  retitle-bump:
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.user.login == 'lovablegarden-bot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'bump/') &&
+      startsWith(github.event.pull_request.title, 'chore: bump ')
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Retitle as fix(deps)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ github.event.pull_request.title }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr edit "$NUMBER" -R "$GITHUB_REPOSITORY" --title "fix(deps): ${TITLE#chore: }"
+
+  # Release only from a main commit whose required checks all passed.
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.scripts-ref }}
+          path: .lg-release
+          sparse-checkout: scripts/release
+
+      - name: Required checks green on the current main commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+        run: |
+          MAIN_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          # A run for an older commit leaves the decision to the run for the newest one.
+          if [ -n "$RUN_SHA" ] && [ "$RUN_SHA" != "$MAIN_SHA" ]; then
+            echo "main moved on from ${RUN_SHA} to ${MAIN_SHA}; skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          .lg-release/scripts/release/checks-green.sh "$GITHUB_REPOSITORY" "$MAIN_SHA"
+          RESULT=$?
+          set -e
+          case "$RESULT" in
+            0) echo "ready=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "Other required checks still running; their completion runs this again."
+               echo "ready=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Required checks failed on main ${MAIN_SHA}; no release."
+               exit 1 ;;
+          esac
+
+  release:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # Release-please is idempotent, but two runs at once can race on the release PR branch.
+    concurrency:
+      group: gated-release-please-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+    steps:
+      # The App token makes the release PR and the tag start CI and release-published.yml;
+      # GITHUB_TOKEN events start no workflows.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: ${{ inputs.config-file }}
+          manifest-file: ${{ inputs.manifest-file }}
+
+  # Each time a required-check workflow finishes on a bot PR, try to merge it.
+  merge:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (startsWith(github.event.workflow_run.head_branch, 'bump/') ||
+       startsWith(github.event.workflow_run.head_branch, 'release-please--branches--main--'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    # One merge decision per PR at a time; several required-check workflows can finish together.
+    concurrency:
+      group: gated-release-merge-${{ github.repository }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      # Scripts from lovablegarden/.github, never the PR's code.
+      - uses: actions/checkout@v4
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.scripts-ref }}
+          path: .lg-release
+          sparse-checkout: scripts/release
+
+      # Merge as the GitHub App: a merge pushed with GITHUB_TOKEN would not start CI on main, and
+      # then neither the release gate nor anything downstream would run.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
+          private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+          owner: lovablegarden
+
+      - name: Merge when required checks are green
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CHECKS_GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+          BUMP_FILES: ${{ inputs.bump-files }}
+          RELEASE_FILES: ${{ inputs.release-files }}
+          COMPONENT_PATHS: ${{ inputs.component-paths }}
+        run: .lg-release/scripts/release/merge-bot-pr.sh "$GITHUB_REPOSITORY" "$HEAD_BRANCH" "$HEAD_SHA"
