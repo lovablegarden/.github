@@ -91,7 +91,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TITLE: ${{ github.event.pull_request.title }}
           NUMBER: ${{ github.event.pull_request.number }}
-        run: gh pr edit "$NUMBER" -R "$GITHUB_REPOSITORY" --title "fix(deps): ${TITLE#chore: }"
+        run: |
+          gh pr edit "$NUMBER" -R "$GITHUB_REPOSITORY" --title "fix(deps): ${TITLE#chore: }"
 
   # Release only from a main commit whose required checks all passed.
   gate:
