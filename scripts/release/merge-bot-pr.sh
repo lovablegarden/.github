@@ -152,8 +152,34 @@ fi
 SUBJECT="${SUBJECT} (#${NUMBER})"
 
 echo "Merging PR #${NUMBER} as: ${SUBJECT}"
-gh pr merge "$NUMBER" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$SUBJECT" \
-  --body "Merged by gated-release.yml after the required checks passed on ${SHA}."
+# Another merge can land on main between our checks and this call; GitHub then refuses with "Base
+# branch was modified" and no later event retries (lovablegarden-system #240, 2026-11-10).
+# A bump only touches its own lock/BOM line, so retry it. A release PR must be rebuilt from the new
+# main instead: leave it, and release-please refreshes it on the next green main run.
+ATTEMPTS="${MERGE_ATTEMPTS:-4}"
+for ATTEMPT in $(seq 1 "$ATTEMPTS"); do
+  set +e
+  OUT=$(gh pr merge "$NUMBER" -R "$REPO" --squash --match-head-commit "$SHA" --subject "$SUBJECT" \
+    --body "Merged by gated-release.yml after the required checks passed on ${SHA}." 2>&1)
+  RC=$?
+  set -e
+  printf '%s\n' "$OUT"
+  [ "$RC" -eq 0 ] && break
+  if ! printf '%s' "$OUT" | grep -q 'Base branch was modified'; then
+    echo "::error::Merging PR #${NUMBER} failed."
+    exit 1
+  fi
+  if [ "$KIND" = release ]; then
+    echo "main moved while merging release PR #${NUMBER}; release-please refreshes it on the next green main run."
+    exit 0
+  fi
+  if [ "$ATTEMPT" -eq "$ATTEMPTS" ]; then
+    echo "::error::main kept moving; PR #${NUMBER} not merged after ${ATTEMPTS} attempts. Re-run this job."
+    exit 1
+  fi
+  echo "main moved while merging; retrying (${ATTEMPT}/${ATTEMPTS})"
+  sleep "${MERGE_RETRY_SECONDS:-10}"
+done
 # Delete the head branch through the API: `gh pr merge --delete-branch` also touches the local
 # checkout. A failure here leaves a stale branch only, so it does not fail the run.
 gh api -X DELETE "repos/${REPO}/git/refs/heads/${BRANCH}" >/dev/null \
