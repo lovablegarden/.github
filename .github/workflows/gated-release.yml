@@ -94,15 +94,16 @@ jobs:
         run: |
           gh pr edit "$NUMBER" -R "$GITHUB_REPOSITORY" --title "fix(deps): ${TITLE#chore: }"
 
-  # Release only from a main commit whose required checks all passed.
+  # Release only from a main commit whose required checks all passed. The required checks decide,
+  # not the workflow's conclusion: a failing job that isn't required (lovablegarden-audit's
+  # publish-jar) must not block releases, and a failed required check turns this run red.
   gate:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository &&
-       github.event.workflow_run.conclusion == 'success')
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -174,12 +175,12 @@ jobs:
           config-file: ${{ inputs.config-file }}
           manifest-file: ${{ inputs.manifest-file }}
 
-  # Each time a required-check workflow finishes on a bot PR, try to merge it.
+  # Each time a required-check workflow finishes on a bot PR, try to merge it. As in the gate, the
+  # required checks decide (merge-bot-pr.sh), not the workflow's conclusion.
   merge:
     if: >-
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (startsWith(github.event.workflow_run.head_branch, 'bump/') ||
        startsWith(github.event.workflow_run.head_branch, 'release-please--branches--main--'))
