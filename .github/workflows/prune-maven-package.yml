@@ -22,6 +22,14 @@ on:
         required: false
         type: string
         default: ''
+      soft_fail:
+        description: >-
+          Let a failed prune pass (it still shows as an error annotation), so cleanup never blocks
+          what runs after it, e.g. the BOM consumer bumps after a release (LG-1219). The pin guard
+          still stops before deleting anything.
+        required: false
+        type: boolean
+        default: false
     secrets:
       LOVABLEGARDEN_BOT_PRIVATE_KEY:
         required: true
@@ -60,6 +68,8 @@ permissions:
 jobs:
   prune:
     runs-on: ubuntu-latest
+    # Unset (workflow_dispatch) compares as false, so manual runs still fail on errors.
+    continue-on-error: ${{ inputs.soft_fail == true }}
     steps:
       - name: Create GitHub App token
         id: app-token

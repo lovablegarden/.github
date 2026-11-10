@@ -98,6 +98,8 @@ jobs:
       package_name: ${{ matrix.package_name }}
       protect_versions: ${{ inputs.version }}
       dry_run: ${{ inputs.prune_dry_run }}
+      # A failed prune must not stop the BOM consumer bumps that callers chain after this (LG-1219).
+      soft_fail: true
     secrets:
       LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
       LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
