@@ -1,0 +1,31 @@
+# Gated release with bot PR auto-merge (LG-1219). Replaces the old push-triggered release-please.yml.
+# Copy to .github/workflows/release-please.yml and set required-checks to this repo's check names.
+# Flow and rules: lovablegarden-system docs/pipelines/release-flow.md ("Org-wide gated release").
+name: Release Please
+
+on:
+  # Every workflow that owns a required check. No branch filter: PR runs drive the auto-merge,
+  # main push runs drive the release.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  # Retitles bot `chore: bump …` PRs to `fix(deps): bump …`. Runs from main; never checks out PR code.
+  pull_request_target:
+    types: [opened, reopened, edited]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  release:
+    uses: lovablegarden/.github/.github/workflows/gated-release.yml@main
+    with:
+      required-checks: |
+        ci / Build Application
+    secrets:
+      LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+      LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
