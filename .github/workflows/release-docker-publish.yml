@@ -120,6 +120,9 @@ jobs:
       image_name: ${{ github.event.repository.name }}
       protect_versions: ${{ needs.publish.outputs.version }}
       dry_run: ${{ inputs.prune_dry_run }}
+      # A failed prune (e.g. a token without delete:packages) must not stop the release reaching
+      # lovablegarden-system: callers chain bump-system-lock after this whole workflow (LG-1219).
+      soft_fail: true
     secrets:
       LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
       LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
