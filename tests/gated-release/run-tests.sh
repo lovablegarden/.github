@@ -27,7 +27,12 @@ case "$1 $2" in
   "api --paginate")
     jq -r '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' "$FIX/check-runs.json" ;;
   "pr list") cat "$FIX/pr-list.json" ;;
-  "pr merge") echo merged ;;
+  "pr merge")
+    # $FIX/merge-errors: one stderr message per failing attempt, consumed in order.
+    if [ -s "$FIX/merge-errors" ]; then
+      head -1 "$FIX/merge-errors" >&2; sed -i.bak 1d "$FIX/merge-errors"; exit 1
+    fi
+    echo merged ;;
   "api -X") [ -f "$FIX/delete-fails" ] && exit 1; exit 0 ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
@@ -202,6 +207,34 @@ check "other branch -> gh never called" "" "$(cat "$FIX/calls")"
 new_fixture; runs "${GREEN[@]}"; touch "$FIX/delete-fails"
 pr $BOT "chore: bump x" sha1 gradle.properties
 "$MB" o/r bump/x sha1 >/dev/null; check "branch delete failure does not fail the merge" 0 $?
+
+# --- merge races (main moved between the checks and the merge) ---
+export MERGE_RETRY_SECONDS=0
+new_fixture; runs "${GREEN[@]}"
+pr $BOT "chore: bump x" sha1 gradle.properties
+echo "GraphQL: Base branch was modified. Review and try the merge again. (mergePullRequest)" > "$FIX/merge-errors"
+"$MB" o/r bump/x sha1 >/dev/null 2>&1; check "bump: base moved once -> retried, exit 0" 0 $?
+check "bump: base moved once -> two merge calls" 2 "$(merges)"
+check "bump: branch deleted after retry" 1 "$(grep -c '^api -X DELETE' "$FIX/calls")"
+
+new_fixture; runs "${GREEN[@]}"
+pr $BOT "chore: bump x" sha1 gradle.properties
+for _ in 1 2 3 4; do echo "GraphQL: Base branch was modified. (mergePullRequest)"; done > "$FIX/merge-errors"
+"$MB" o/r bump/x sha1 >/dev/null 2>&1; check "bump: base keeps moving -> exit 1 after 4 attempts" 1 $?
+check "bump: base keeps moving -> 4 merge calls" 4 "$(merges)"
+
+new_fixture; runs "${GREEN[@]}"
+pr $BOT "chore(main): release lovablegarden-users 1.0.2" sha1 "${REL[@]}"
+echo "GraphQL: Base branch was modified. (mergePullRequest)" > "$FIX/merge-errors"
+"$MB" o/r "$SR" sha1 >/dev/null 2>&1; check "release PR: base moved -> exit 0, left for release-please" 0 $?
+check "release PR: base moved -> no retry" 1 "$(merges)"
+
+new_fixture; runs "${GREEN[@]}"
+pr $BOT "chore: bump x" sha1 gradle.properties
+echo "GraphQL: Pull Request is not mergeable (mergePullRequest)" > "$FIX/merge-errors"
+"$MB" o/r bump/x sha1 >/dev/null 2>&1; check "bump: conflict (superseded) -> exit 1, no retry" 1 $?
+check "bump: conflict -> one merge call" 1 "$(merges)"
+unset MERGE_RETRY_SECONDS
 
 # ============ lovablegarden-system settings (two components) ===================================
 export REQUIRED_CHECKS=$'Build and Test System Image\nGateway routing (dev)\nGateway routing (stage)\nGateway routing (prod)'
