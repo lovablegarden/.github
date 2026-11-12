@@ -49,6 +49,10 @@ on:
         description: 'Image scanned on push/schedule/dispatch, e.g. ghcr.io/lovablegarden/<repo>:latest. Empty skips the image job.'
         type: string
         default: ''
+      image-platform:
+        description: 'Platform of `image` to scan. The org CI builds linux/arm64 only.'
+        type: string
+        default: 'linux/arm64'
       image-on-pr:
         description: 'Also scan `image` on pull requests. Off by default: the image is not built from the PR.'
         type: boolean
@@ -408,6 +412,7 @@ jobs:
       - name: Scan
         env:
           IMAGE: ${{ inputs.image }}
+          TRIVY_PLATFORM: ${{ inputs.image-platform }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: |
