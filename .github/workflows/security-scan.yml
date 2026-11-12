@@ -16,7 +16,7 @@ name: Security Scan
 #   enforce-on: pull_request (default)  PRs fail only on findings they introduce (compared
 #                                       with a scan of the base commit). main, nightly and
 #                                       image runs report the full set as a warning, so a
-#                                       known baseline (e.g. Spring Boot 3.2.3) stays visible
+#                                       known baseline stays visible
 #                                       without turning every repo red.
 #   enforce-on: always                  main, nightly and image runs fail too. Switch a repo
 #                                       to this once its baseline is cleared.
