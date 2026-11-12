@@ -333,10 +333,15 @@ jobs:
       - name: Scan
         env:
           IMAGE: ${{ inputs.image }}
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
         run: |
           set -euo pipefail
+          # Credentials go to GHCR only, never to another registry.
+          case "$IMAGE" in
+            ghcr.io/*) export TRIVY_USERNAME="$GHCR_USER" TRIVY_PASSWORD="$GHCR_TOKEN" ;;
+          esac
+          unset GHCR_TOKEN
           trivy image --scanners vuln --format json --output "$RUNNER_TEMP/trivy.json" "$IMAGE"
 
       - name: Report

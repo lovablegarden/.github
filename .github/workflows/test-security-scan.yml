@@ -32,7 +32,7 @@ jobs:
     uses: ./.github/workflows/security-scan.yml
     with:
       scan-path: tests/security-scan/fixtures/vulnerable
-      image: public.ecr.aws/docker/library/alpine:3.12.0
+      image: mirror.gcr.io/library/alpine:3.12.0
       image-on-pr: true
       enforce: false
 

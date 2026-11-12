@@ -11,4 +11,4 @@ Fixtures are inert:
 
 - `fixtures/vulnerable/package-lock.json` pins `minimist@1.2.5` (CVE-2021-44906, CRITICAL, fixed in 1.2.6). Nothing installs it.
 - `fixtures/vulnerable/app.properties` holds a random string shaped like an API key. It is not a credential for anything.
-- The image job scans `public.ecr.aws/docker/library/alpine:3.12.0`, an old public image with fixable CRITICAL CVEs.
+- The image job scans `mirror.gcr.io/library/alpine:3.12.0`, an old public image with fixable CRITICAL CVEs.
