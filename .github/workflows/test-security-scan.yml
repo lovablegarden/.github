@@ -1,0 +1,58 @@
+name: Test security scan
+
+# Proves both paths of the reusable security-scan.yml (LG-1218): this repo scans clean,
+# and the inert fixtures in tests/security-scan/fixtures/vulnerable are caught.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/security-scan.yml'
+      - '.github/workflows/test-security-scan.yml'
+      - 'tests/security-scan/**'
+      - '.gitleaks.toml'
+      - 'trivy.yaml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/security-scan.yml'
+      - '.github/workflows/test-security-scan.yml'
+      - 'tests/security-scan/**'
+      - '.gitleaks.toml'
+      - 'trivy.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  clean:
+    uses: ./.github/workflows/security-scan.yml
+
+  vulnerable:
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      scan-path: tests/security-scan/fixtures/vulnerable
+      image: public.ecr.aws/docker/library/alpine:3.12.0
+      image-on-pr: true
+      enforce: false
+
+  assert:
+    needs: [clean, vulnerable]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check findings
+        env:
+          CLEAN_SECRETS: ${{ needs.clean.outputs.secrets }}
+          CLEAN_DEPS: ${{ needs.clean.outputs.dependencies }}
+          VULN_SECRETS: ${{ needs.vulnerable.outputs.secrets }}
+          VULN_DEPS: ${{ needs.vulnerable.outputs.dependencies }}
+          VULN_IMAGE: ${{ needs.vulnerable.outputs.image }}
+        run: |
+          fail=0
+          check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+          check "clean repo: 0 secrets (got '$CLEAN_SECRETS')"                '[ "${CLEAN_SECRETS:-x}" = 0 ]'
+          check "clean repo: 0 gating dependency findings (got '$CLEAN_DEPS')" '[ "${CLEAN_DEPS:-x}" = 0 ]'
+          check "fixture: secret found (got '$VULN_SECRETS')"                  '[ "${VULN_SECRETS:-0}" -ge 1 ]'
+          check "fixture: minimist CRITICAL found (got '$VULN_DEPS')"          '[ "${VULN_DEPS:-0}" -ge 1 ]'
+          check "fixture: image CRITICAL found (got '$VULN_IMAGE')"            '[ "${VULN_IMAGE:-0}" -ge 1 ]'
+          exit $fail

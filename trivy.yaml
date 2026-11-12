@@ -1,0 +1,4 @@
+# Trivy config for this repo's own scan (LG-1218). The fixtures are vulnerable on purpose.
+scan:
+  skip-dirs:
+    - tests/security-scan/fixtures

@@ -1,0 +1,7 @@
+# gitleaks config for this repo (LG-1218): default rules, minus the inert test fixtures.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "security-scan test fixtures (tests/security-scan/README.md)"
+paths = ['''tests/security-scan/fixtures/''']

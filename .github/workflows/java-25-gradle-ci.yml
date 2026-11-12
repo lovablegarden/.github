@@ -33,26 +33,6 @@ jobs:
         with:
           gradle-version: wrapper
   
-      - name: Debug GitHub Packages access
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
-        run: |
-          echo "=== GitHub Environment Debug ==="
-          echo "GitHub Actor: $GITHUB_ACTOR"
-          echo "GitHub Token: ${GH_PACKAGE_TOKEN:0:10}..."
-          echo "Repository: ${{ github.repository }}"
-          echo ""
-          echo "=== Testing GitHub Packages Access ==="
-          curl -H "Authorization: token $GH_PACKAGE_TOKEN" -H "Accept: application/vnd.github.v3+json" \
-               "https://api.github.com/orgs/gardentalkz/packages/maven/se.gardentalkz.api.gardentalkz-api-auth/versions" \
-               || echo "Failed to access package versions"
-          echo ""
-          echo "=== Testing Maven Repository Access ==="
-          curl -H "Authorization: token $GH_PACKAGE_TOKEN" \
-               "https://maven.pkg.github.com/gardentalkz/gardentalkz-openapi-spec/se/gardentalkz/api/gardentalkz-api-auth/1.0.0/gardentalkz-api-auth-1.0.0.pom" \
-               || echo "Failed to access Maven artifact"
-  
       - name: Wait for lovablegarden-bom (if configured)
         env:
           GITHUB_ACTOR: ${{ github.actor }}

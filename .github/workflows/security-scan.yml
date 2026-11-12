@@ -1,0 +1,410 @@
+name: Security Scan
+
+# Reusable security scan (LG-1218): secrets, dependencies, IaC, container images and SAST.
+#
+# GitHub Advanced Security is not enabled on the org's private/internal repos, so CodeQL
+# uploads and dependency-review are unavailable. The scan uses open tools instead, pinned
+# by version and SHA-256, and reports to the job summary and to SARIF/JSON artifacts:
+#   secrets       gitleaks   any finding fails; output is redacted
+#   dependencies  Trivy fs   Gradle (resolved runtimeClasspath), npm/yarn/pnpm lock files,
+#                            plus Dockerfile/compose/Kubernetes misconfiguration
+#   image         Trivy      the published image: OS packages and bundled jars (not on PRs)
+#   sast          Semgrep    report only until a baseline is agreed (`sast-enforce`)
+#
+# Dependency and image gates fail on *fixable* findings at or above `severity-threshold`.
+# Every severity, fixable or not, is still listed in the summary and the artifacts.
+# Accepted findings go in `.trivyignore` / `.gitleaksignore` at the root of `scan-path`,
+# each with a comment naming the Jira issue that accepts it.
+#
+# Caller, `.github/workflows/security-scan.yml` in each repo:
+#   on:
+#     pull_request: { branches: [main] }
+#     push: { branches: [main] }
+#     schedule: [{ cron: '23 4 * * *' }]   # catches new CVEs without a code change
+#     workflow_dispatch:
+#   permissions: { contents: read, packages: read }
+#   jobs:
+#     security:
+#       uses: lovablegarden/.github/.github/workflows/security-scan.yml@main
+#       with: { image: ghcr.io/lovablegarden/<repo>:latest }
+#       secrets: { GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }} }
+#
+# It is a separate caller, not a job in ci.yml: ci.yml publishes an image on every main
+# run, so a schedule there would republish `latest` nightly.
+#
+# Use `pull_request`, never `pull_request_target`, so PRs from forks get no secrets.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'Image scanned on push/schedule/dispatch, e.g. ghcr.io/lovablegarden/<repo>:latest. Empty skips the image job.'
+        type: string
+        default: ''
+      image-on-pr:
+        description: 'Also scan `image` on pull requests. Off by default: the image is not built from the PR.'
+        type: boolean
+        default: false
+      scan-path:
+        description: 'Directory to scan, relative to the repo root'
+        type: string
+        default: '.'
+      java-version:
+        description: 'JDK used to resolve Gradle dependencies'
+        type: string
+        default: '21'
+      severity-threshold:
+        description: 'Lowest severity that fails the dependency and image gates: CRITICAL, HIGH or MEDIUM'
+        type: string
+        default: 'CRITICAL'
+      enforce:
+        description: 'Fail the secrets, dependency and image jobs on gating findings. false = report only.'
+        type: boolean
+        default: true
+      sast-enforce:
+        description: 'Fail on Semgrep ERROR findings. Report only by default.'
+        type: boolean
+        default: false
+    secrets:
+      GH_PACKAGES_TOKEN:
+        description: 'Reads private Maven packages and GHCR images. Falls back to github.token.'
+        required: false
+    outputs:
+      secrets:
+        description: 'Number of gitleaks findings'
+        value: ${{ jobs.secrets.outputs.findings }}
+      dependencies:
+        description: 'Number of fixable dependency/IaC findings at or above the threshold'
+        value: ${{ jobs.dependencies.outputs.findings }}
+      image:
+        description: 'Number of fixable image findings at or above the threshold (empty if skipped)'
+        value: ${{ jobs.image.outputs.findings }}
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  GITLEAKS_VERSION: '8.30.1'
+  GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+  TRIVY_VERSION: '0.76.1'
+  TRIVY_SHA256: 'c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0'
+  SEMGREP_IMAGE: 'semgrep/semgrep:1.182.0@sha256:4a34048c04fef049f71665047f074cffb00cc3d89482f965a5cd151d589237af'
+  TRIVY_CACHE_DIR: /home/runner/.cache/trivy
+  TRIVY_NO_PROGRESS: 'true'
+  TRIVY_DISABLE_VEX_NOTICE: 'true'
+  SCAN_PATH: ${{ inputs.scan-path }}
+  THRESHOLD: ${{ inputs.severity-threshold }}
+  ENFORCE: ${{ inputs.enforce }}
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          persist-credentials: false
+
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        run: |
+          set -euo pipefail
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan
+        id: scan
+        working-directory: ${{ inputs.scan-path }}
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/gitleaks.sarif"
+          # A PR scans only the commits it adds, so an old secret already on main does not
+          # block unrelated PRs. push/schedule/dispatch scan the whole current tree.
+          if [ "$EVENT" = "pull_request" ] && [ "$SCAN_PATH" = "." ]; then
+            gitleaks git --redact --no-banner --exit-code 0 \
+              --log-opts="${BASE_SHA}..HEAD" --report-format sarif --report-path "$report" .
+          else
+            gitleaks dir --redact --no-banner --exit-code 0 \
+              --report-format sarif --report-path "$report" .
+          fi
+          count=$(jq '[.runs[].results[]] | length' "$report")
+          echo "findings=$count" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Secrets (gitleaks ${GITLEAKS_VERSION})"
+            if [ "$count" = 0 ]; then
+              echo "No secrets found."
+            else
+              echo "**${count} finding(s).** Values are redacted. Rotate and remove the secret. Add its fingerprint to \`.gitleaksignore\` only for a false positive."
+              echo
+              echo "| Rule | File | Line |"
+              echo "| --- | --- | --- |"
+              jq -r '.runs[].results[] | "| \(.ruleId) | \(.locations[0].physicalLocation.artifactLocation.uri) | \(.locations[0].physicalLocation.region.startLine) |"' "$report" | head -50
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$count" != 0 ]; then
+            if [ "$ENFORCE" = "true" ]; then echo "::error::gitleaks found ${count} secret(s)"; exit 1; fi
+            echo "::warning::gitleaks found ${count} secret(s) (report only)"
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-gitleaks
+          path: ${{ runner.temp }}/gitleaks.sarif
+          if-no-files-found: ignore
+          retention-days: 14
+
+  dependencies:
+    name: Dependencies and IaC (Trivy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      findings: ${{ steps.gate.outputs.findings }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.scan-path }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect Gradle
+        id: detect
+        run: |
+          if [ -f ./gradlew ]; then echo "gradle=true" >> "$GITHUB_OUTPUT"; else echo "gradle=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        if: steps.detect.outputs.gradle == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: temurin
+
+      - name: Set up Gradle
+        if: steps.detect.outputs.gradle == 'true'
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-read-only: true
+
+      - name: Resolve Gradle runtime dependencies to gradle.lockfile
+        if: steps.detect.outputs.gradle == 'true'
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+          GH_PACKAGE_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          # Trivy reads Gradle versions from gradle.lockfile. The services have no lock
+          # files, so lock what ships (runtimeClasspath) for this run only; nothing is committed.
+          init="$RUNNER_TEMP/lock-runtime.gradle"
+          cat > "$init" <<'GRADLE'
+          allprojects {
+              configurations.matching { it.name == 'runtimeClasspath' }.configureEach {
+                  resolutionStrategy.activateDependencyLocking()
+              }
+          }
+          GRADLE
+          chmod +x ./gradlew
+          ./gradlew dependencies --write-locks --no-daemon -q -I "$init" > /dev/null
+          find . -name gradle.lockfile -not -path '*/.gradle/*' -exec sh -c 'echo "$1: $(grep -vc "^#\|^empty=" "$1") dependencies"' _ {} \;
+
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}
+        run: &install-trivy |
+          set -euo pipefail
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Cache Trivy DB
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ github.run_id }}-${{ github.run_attempt }}-fs
+          restore-keys: trivy-db-
+
+      - name: Scan
+        run: |
+          set -euo pipefail
+          trivy fs --scanners vuln,misconfig --format json --output "$RUNNER_TEMP/trivy.json" .
+
+      - name: Report
+        id: report
+        env:
+          TITLE: Dependencies and IaC
+        run: &trivy-report |
+          set -euo pipefail
+          r="$RUNNER_TEMP/trivy.json"
+          trivy convert --format sarif --output "$RUNNER_TEMP/trivy.sarif" "$r"
+          case "$THRESHOLD" in
+            CRITICAL) sev='["CRITICAL"]' ;;
+            HIGH) sev='["CRITICAL","HIGH"]' ;;
+            MEDIUM) sev='["CRITICAL","HIGH","MEDIUM"]' ;;
+            *) echo "::error::severity-threshold must be CRITICAL, HIGH or MEDIUM"; exit 2 ;;
+          esac
+          # Gating findings: fixable vulnerabilities and failed misconfigurations at or above the threshold
+          gating=$(jq --argjson sev "$sev" '
+            [ .Results[]? | ((.Vulnerabilities // [])[] | select((.FixedVersion // "") != "") | .Severity),
+                            ((.Misconfigurations // [])[] | select(.Status == "FAIL") | .Severity) ]
+            | map(select(. as $s | $sev | index($s))) | length' "$r")
+          echo "findings=$gating" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ${TITLE} (Trivy ${TRIVY_VERSION})"
+            jq -r 'if .ArtifactType == "container_image" then "Image `\(.ArtifactName)`, digest `\(.Metadata.RepoDigests[0] // "unknown")`" else empty end' "$r"
+            echo
+            echo "**${gating}** fixable finding(s) at ${THRESHOLD} or above. All findings:"
+            echo
+            jq -r '
+              def n($xs; $s): [$xs[] | select(. == $s)] | length;
+              [ .Results[]? | (.Vulnerabilities // [])[] | .Severity ] as $v
+              | [ .Results[]? | (.Misconfigurations // [])[] | select(.Status == "FAIL") | .Severity ] as $m
+              | "| | CRITICAL | HIGH | MEDIUM | LOW |",
+                "| --- | --- | --- | --- | --- |",
+                "| Vulnerabilities | \(n($v;"CRITICAL")) | \(n($v;"HIGH")) | \(n($v;"MEDIUM")) | \(n($v;"LOW")) |",
+                "| Misconfigurations | \(n($m;"CRITICAL")) | \(n($m;"HIGH")) | \(n($m;"MEDIUM")) | \(n($m;"LOW")) |"' "$r"
+            echo
+            echo "<details><summary>CRITICAL and HIGH</summary>"
+            echo
+            echo "| Severity | Package or check | Installed | Fixed | ID | Target |"
+            echo "| --- | --- | --- | --- | --- | --- |"
+            jq -r '.Results[]? as $t
+              | ( ($t.Vulnerabilities // [])[] | select(.Severity == "CRITICAL" or .Severity == "HIGH")
+                  | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion // "-") | \(.VulnerabilityID) | \($t.Target) |" ),
+                ( ($t.Misconfigurations // [])[] | select(.Status == "FAIL" and (.Severity == "CRITICAL" or .Severity == "HIGH"))
+                  | "| \(.Severity) | \(.Title) | - | - | \(.ID) | \($t.Target) |" )' "$r" | sort -u | head -150
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-trivy-fs
+          path: |
+            ${{ runner.temp }}/trivy.json
+            ${{ runner.temp }}/trivy.sarif
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Gate (fixable ${{ inputs.severity-threshold }} and above)
+        id: gate
+        env:
+          FINDINGS: ${{ steps.report.outputs.findings }}
+        run: &trivy-gate |
+          echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
+          [ "$FINDINGS" = 0 ] && exit 0
+          msg="${FINDINGS} fixable finding(s) at ${THRESHOLD} or above; see the job summary. Upgrade, or add the ID to .trivyignore with the Jira issue that accepts it."
+          if [ "$ENFORCE" = "true" ]; then echo "::error::$msg"; exit 1; fi
+          echo "::warning::$msg (report only)"
+
+  image:
+    name: Container image (Trivy)
+    if: inputs.image != '' && (github.event_name != 'pull_request' || inputs.image-on-pr)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      findings: ${{ steps.gate.outputs.findings }}
+    steps:
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}
+        run: *install-trivy
+
+      - name: Cache Trivy DB
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ github.run_id }}-${{ github.run_attempt }}-image
+          restore-keys: trivy-db-
+
+      - name: Scan
+        env:
+          IMAGE: ${{ inputs.image }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          trivy image --scanners vuln --format json --output "$RUNNER_TEMP/trivy.json" "$IMAGE"
+
+      - name: Report
+        id: report
+        env:
+          TITLE: Container image
+        run: *trivy-report
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-trivy-image
+          path: |
+            ${{ runner.temp }}/trivy.json
+            ${{ runner.temp }}/trivy.sarif
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Gate (fixable ${{ inputs.severity-threshold }} and above)
+        id: gate
+        env:
+          FINDINGS: ${{ steps.report.outputs.findings }}
+        run: *trivy-gate
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Scan
+        working-directory: ${{ inputs.scan-path }}
+        env:
+          SAST_ENFORCE: ${{ inputs.sast-enforce }}
+        run: |
+          set -u
+          out="$RUNNER_TEMP/semgrep"
+          mkdir -p "$out"
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e SEMGREP_SEND_METRICS=off \
+            -v "$PWD:/src:ro" -v "$out:/out" -w /src "$SEMGREP_IMAGE" \
+            semgrep scan --config p/default --metrics off --quiet \
+              --json-output=/out/semgrep.json --sarif-output=/out/semgrep.sarif
+          if [ ! -s "$out/semgrep.json" ]; then echo "::error::Semgrep produced no report"; exit 1; fi
+          errors=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' "$out/semgrep.json")
+          total=$(jq '.results | length' "$out/semgrep.json")
+          {
+            echo "### SAST (Semgrep, p/default)"
+            echo "${total} finding(s), ${errors} at ERROR severity. Report only unless \`sast-enforce\` is set."
+            echo
+            echo "| Severity | Rule | File | Line |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.results[] | "| \(.extra.severity) | \(.check_id | split(".") | last) | \(.path) | \(.start.line) |"' "$out/semgrep.json" | head -50
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SAST_ENFORCE" = "true" ] && [ "$errors" != "0" ]; then
+            echo "::error::${errors} Semgrep ERROR finding(s)"
+            exit 1
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-semgrep
+          path: ${{ runner.temp }}/semgrep/
+          if-no-files-found: ignore
+          retention-days: 14
