@@ -215,6 +215,11 @@ jobs:
           path: .security-base
           persist-credentials: false
 
+      - name: Move PR base out of the workspace
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        run: mv .security-base "$RUNNER_TEMP/security-base"
+
       - name: Detect Gradle
         id: detect
         run: |
@@ -253,11 +258,11 @@ jobs:
           GRADLE
           lock() {
             (cd "$1" && chmod +x ./gradlew && ./gradlew dependencies --write-locks --no-daemon -q -I "$init" > /dev/null)
-            find "$1" -name gradle.lockfile -not -path '*/.gradle/*' -not -path './.security-base/*' \
+            find "$1" -name gradle.lockfile -not -path '*/.gradle/*' \
               -exec sh -c 'echo "$1: $(grep -vc "^#\|^empty=" "$1") dependencies"' _ {} \;
           }
           lock .
-          base="$GITHUB_WORKSPACE/.security-base/$SCAN_PATH"
+          base="$RUNNER_TEMP/security-base/$SCAN_PATH"
           if [ -f "$base/gradlew" ]; then
             lock "$base" || echo "::warning::Could not resolve the base commit's Gradle dependencies; every finding counts as new"
           fi
@@ -281,8 +286,8 @@ jobs:
       - name: Scan
         run: |
           set -euo pipefail
-          trivy fs --scanners vuln,misconfig --skip-dirs .security-base --format json --output "$RUNNER_TEMP/trivy.json" .
-          base="$GITHUB_WORKSPACE/.security-base/$SCAN_PATH"
+          trivy fs --scanners vuln,misconfig --format json --output "$RUNNER_TEMP/trivy.json" .
+          base="$RUNNER_TEMP/security-base/$SCAN_PATH"
           if [ -d "$base" ]; then
             (cd "$base" && trivy fs --scanners vuln,misconfig --format json --output "$RUNNER_TEMP/trivy-base.json" .) \
               || echo "::warning::Base scan failed; every finding counts as new"
