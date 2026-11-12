@@ -11,8 +11,16 @@ name: Security Scan
 #   image         Trivy      the published image: OS packages and bundled jars (not on PRs)
 #   sast          Semgrep    report only until a baseline is agreed (`sast-enforce`)
 #
-# Dependency and image gates fail on *fixable* findings at or above `severity-threshold`.
+# Dependency and image gates count *fixable* findings at or above `severity-threshold`.
 # Every severity, fixable or not, is still listed in the summary and the artifacts.
+#   enforce-on: pull_request (default)  PRs fail only on findings they introduce (compared
+#                                       with a scan of the base commit). main, nightly and
+#                                       image runs report the full set as a warning, so a
+#                                       known baseline stays visible
+#                                       without turning every repo red.
+#   enforce-on: always                  main, nightly and image runs fail too. Switch a repo
+#                                       to this once its baseline is cleared.
+# Secrets always fail, on every event.
 # Accepted findings go in `.trivyignore` / `.gitleaksignore` at the root of `scan-path`,
 # each with a comment naming the Jira issue that accepts it.
 #
@@ -58,9 +66,13 @@ on:
         type: string
         default: 'CRITICAL'
       enforce:
-        description: 'Fail the secrets, dependency and image jobs on gating findings. false = report only.'
+        description: 'Master switch: false = report only, nothing fails'
         type: boolean
         default: true
+      enforce-on:
+        description: 'pull_request = PRs fail on findings they introduce, other events report. always = every event fails on any gating finding.'
+        type: string
+        default: 'pull_request'
       sast-enforce:
         description: 'Fail on Semgrep ERROR findings. Report only by default.'
         type: boolean
@@ -76,6 +88,9 @@ on:
       dependencies:
         description: 'Number of fixable dependency/IaC findings at or above the threshold'
         value: ${{ jobs.dependencies.outputs.findings }}
+      dependencies-new:
+        description: 'On a PR: how many of those the PR introduces compared with its base commit'
+        value: ${{ jobs.dependencies.outputs.new-findings }}
       image:
         description: 'Number of fixable image findings at or above the threshold (empty if skipped)'
         value: ${{ jobs.image.outputs.findings }}
@@ -96,6 +111,16 @@ env:
   SCAN_PATH: ${{ inputs.scan-path }}
   THRESHOLD: ${{ inputs.severity-threshold }}
   ENFORCE: ${{ inputs.enforce }}
+  ENFORCE_ON: ${{ inputs.enforce-on }}
+  # One line per gating finding: fixable vulnerabilities and failed misconfigurations at or
+  # above the threshold. Keyed without the installed version, so a PR that bumps a package
+  # but leaves the same CVE open does not count it as new.
+  GATING_JQ: >-
+    .Results[]? as $t
+    | ( ($t.Vulnerabilities // [])[] | select((.FixedVersion // "") != "")
+        | select(.Severity as $s | $sev | index($s)) | "vuln|\(.PkgName)|\(.VulnerabilityID)" ),
+      ( ($t.Misconfigurations // [])[] | select(.Status == "FAIL")
+        | select(.Severity as $s | $sev | index($s)) | "misconfig|\(.ID)|\($t.Target)" )
 
 jobs:
   secrets:
@@ -172,6 +197,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       findings: ${{ steps.gate.outputs.findings }}
+      new-findings: ${{ steps.gate.outputs.new-findings }}
     defaults:
       run:
         working-directory: ${{ inputs.scan-path }}
@@ -180,6 +206,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Checkout PR base (to tell new findings from existing ones)
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .security-base
+          persist-credentials: false
+
+      - name: Move PR base out of the workspace
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        run: mv .security-base "$RUNNER_TEMP/security-base"
 
       - name: Detect Gradle
         id: detect
@@ -217,9 +256,16 @@ jobs:
               }
           }
           GRADLE
-          chmod +x ./gradlew
-          ./gradlew dependencies --write-locks --no-daemon -q -I "$init" > /dev/null
-          find . -name gradle.lockfile -not -path '*/.gradle/*' -exec sh -c 'echo "$1: $(grep -vc "^#\|^empty=" "$1") dependencies"' _ {} \;
+          lock() {
+            (cd "$1" && chmod +x ./gradlew && ./gradlew dependencies --write-locks --no-daemon -q -I "$init" > /dev/null)
+            find "$1" -name gradle.lockfile -not -path '*/.gradle/*' \
+              -exec sh -c 'echo "$1: $(grep -vc "^#\|^empty=" "$1") dependencies"' _ {} \;
+          }
+          lock .
+          base="$RUNNER_TEMP/security-base/$SCAN_PATH"
+          if [ -f "$base/gradlew" ]; then
+            lock "$base" || echo "::warning::Could not resolve the base commit's Gradle dependencies; every finding counts as new"
+          fi
 
       - name: Install Trivy ${{ env.TRIVY_VERSION }}
         run: &install-trivy |
@@ -241,6 +287,11 @@ jobs:
         run: |
           set -euo pipefail
           trivy fs --scanners vuln,misconfig --format json --output "$RUNNER_TEMP/trivy.json" .
+          base="$RUNNER_TEMP/security-base/$SCAN_PATH"
+          if [ -d "$base" ]; then
+            (cd "$base" && trivy fs --scanners vuln,misconfig --format json --output "$RUNNER_TEMP/trivy-base.json" .) \
+              || echo "::warning::Base scan failed; every finding counts as new"
+          fi
 
       - name: Report
         id: report
@@ -256,17 +307,29 @@ jobs:
             MEDIUM) sev='["CRITICAL","HIGH","MEDIUM"]' ;;
             *) echo "::error::severity-threshold must be CRITICAL, HIGH or MEDIUM"; exit 2 ;;
           esac
-          # Gating findings: fixable vulnerabilities and failed misconfigurations at or above the threshold
-          gating=$(jq --argjson sev "$sev" '
-            [ .Results[]? | ((.Vulnerabilities // [])[] | select((.FixedVersion // "") != "") | .Severity),
-                            ((.Misconfigurations // [])[] | select(.Status == "FAIL") | .Severity) ]
-            | map(select(. as $s | $sev | index($s))) | length' "$r")
+          jq -r --argjson sev "$sev" "$GATING_JQ" "$r" | sort -u > "$RUNNER_TEMP/gating.txt"
+          : > "$RUNNER_TEMP/gating-base.txt"
+          if [ -s "$RUNNER_TEMP/trivy-base.json" ]; then
+            jq -r --argjson sev "$sev" "$GATING_JQ" "$RUNNER_TEMP/trivy-base.json" | sort -u > "$RUNNER_TEMP/gating-base.txt"
+          fi
+          gating=$(wc -l < "$RUNNER_TEMP/gating.txt" | tr -d ' ')
           echo "findings=$gating" >> "$GITHUB_OUTPUT"
           {
             echo "### ${TITLE} (Trivy ${TRIVY_VERSION})"
             jq -r 'if .ArtifactType == "container_image" then "Image `\(.ArtifactName)`, digest `\(.Metadata.RepoDigests[0] // "unknown")`" else empty end' "$r"
             echo
             echo "**${gating}** fixable finding(s) at ${THRESHOLD} or above. All findings:"
+            if [ -s "$RUNNER_TEMP/trivy-base.json" ]; then
+              new=$(comm -23 "$RUNNER_TEMP/gating.txt" "$RUNNER_TEMP/gating-base.txt")
+              echo
+              if [ -n "$new" ]; then
+                echo "**Introduced by this PR:**"
+                echo
+                printf '%s\n' "$new" | sed 's/^/- `/; s/$/`/'
+              else
+                echo "None of them is introduced by this PR (all exist on the base commit)."
+              fi
+            fi
             echo
             jq -r '
               def n($xs; $s): [$xs[] | select(. == $s)] | length;
@@ -306,11 +369,23 @@ jobs:
         env:
           FINDINGS: ${{ steps.report.outputs.findings }}
         run: &trivy-gate |
+          set -euo pipefail
           echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
-          [ "$FINDINGS" = 0 ] && exit 0
-          msg="${FINDINGS} fixable finding(s) at ${THRESHOLD} or above; see the job summary. Upgrade, or add the ID to .trivyignore with the Jira issue that accepts it."
-          if [ "$ENFORCE" = "true" ]; then echo "::error::$msg"; exit 1; fi
-          echo "::warning::$msg (report only)"
+          hint="Upgrade, or add the ID to .trivyignore with the Jira issue that accepts it. Details in the job summary."
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -s "$RUNNER_TEMP/trivy-base.json" ]; then
+            new=$(comm -23 "$RUNNER_TEMP/gating.txt" "$RUNNER_TEMP/gating-base.txt" | grep -c . || true)
+            echo "new-findings=$new" >> "$GITHUB_OUTPUT"
+            [ "$FINDINGS" != 0 ] && echo "::notice::${FINDINGS} fixable ${THRESHOLD}+ finding(s) already exist on the base commit or are introduced here; ${new} are new."
+            [ "$new" = 0 ] && exit 0
+            msg="This PR introduces ${new} fixable finding(s) at ${THRESHOLD} or above. $hint"
+            strict=true
+          else
+            [ "$FINDINGS" = 0 ] && exit 0
+            msg="${FINDINGS} fixable finding(s) at ${THRESHOLD} or above. $hint"
+            strict=$([ "$ENFORCE_ON" = "always" ] || [ "$GITHUB_EVENT_NAME" = "pull_request" ] && echo true || echo false)
+          fi
+          if [ "$ENFORCE" = "true" ] && [ "$strict" = "true" ]; then echo "::error::$msg"; exit 1; fi
+          echo "::warning::$msg (reported, not enforced on ${GITHUB_EVENT_NAME})"
 
   image:
     name: Container image (Trivy)
