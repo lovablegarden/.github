@@ -1,0 +1,134 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "LovableGarden shared Renovate preset (LG-1217). Repos opt in with { \"extends\": [\"github>lovablegarden/.github\"] }. See docs/renovate.md.",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommitTypeAll(chore)",
+    ":timezone(Europe/Stockholm)",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 7am on monday"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "platformAutomerge": true,
+  "automergeType": "pr",
+  "rebaseWhen": "conflicted",
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["dependencies", "security"],
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null,
+    "automerge": false
+  },
+  "osvVulnerabilityAlerts": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 7am on the first day of the month"],
+    "automerge": false
+  },
+  "packageRules": [
+    {
+      "description": "Default: nothing auto-merges unless a rule below says so",
+      "matchPackageNames": ["*"],
+      "automerge": false
+    },
+    {
+      "description": "Internal artifacts: the consumer-bump bot owns lovablegardenBomVersion and the system lock; API clients come through the BOM",
+      "matchPackageNames": [
+        "com.lovablegarden:**",
+        "com.lovablegarden.**",
+        "se.lovablegarden.api:**",
+        "@lovablegarden/**",
+        "ghcr.io/lovablegarden/**",
+        "lovablegarden/**"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "GitHub Actions: pinned to commit SHA, grouped, non-major auto-merges after required checks",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "addLabels": ["ci"]
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "automerge": true
+    },
+    {
+      "description": "Gradle wrapper on its own PR; never auto-merged (Gradle 9 has removals, LG-1380)",
+      "matchManagers": ["gradle-wrapper"],
+      "groupName": "Gradle wrapper"
+    },
+    {
+      "description": "Spring Boot plugin and starters move together",
+      "matchPackageNames": [
+        "org.springframework.boot",
+        "org.springframework.boot:**",
+        "io.spring.dependency-management",
+        "io.spring.dependency-management:**"
+      ],
+      "groupName": "Spring Boot"
+    },
+    {
+      "description": "Other Gradle/Maven non-major updates grouped",
+      "matchManagers": ["gradle", "maven"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["!org.springframework.boot", "!org.springframework.boot:**", "!io.spring.dependency-management", "!io.spring.dependency-management:**"],
+      "groupName": "Gradle dependencies (non-major)"
+    },
+    {
+      "description": "npm non-major grouped (frontend, openapi-spec)",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "npm dependencies (non-major)"
+    },
+    {
+      "description": "Patch updates auto-merge after required checks (runtimes and frameworks excluded below)",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
+    },
+    {
+      "description": "Runtimes, frameworks, databases and the Gradle wrapper never auto-merge, at any update type",
+      "matchPackageNames": [
+        "org.springframework.boot",
+        "org.springframework.boot:**",
+        "io.spring.dependency-management",
+        "react",
+        "react-dom",
+        "typescript",
+        "vite",
+        "node",
+        "**/node",
+        "eclipse-temurin",
+        "**/eclipse-temurin",
+        "postgres",
+        "**/postgres",
+        "org.postgresql:postgresql",
+        "org.flywaydb:**"
+      ],
+      "automerge": false
+    },
+    {
+      "matchManagers": ["gradle-wrapper"],
+      "automerge": false
+    },
+    {
+      "description": "Majors: separate PRs, approved from the dependency dashboard first, never auto-merged",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true,
+      "automerge": false,
+      "addLabels": ["major"]
+    },
+    {
+      "description": "Java and Node runtime majors are planned work (LG-1222), not Renovate PRs",
+      "matchDepNames": ["java", "node", "eclipse-temurin"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
