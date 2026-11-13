@@ -28,9 +28,30 @@ The shared preset is [`default.json`](../default.json) at the root of this repo.
 
 Auto-merge uses GitHub's native auto-merge, so it only happens once the branch protection's required checks pass.
 
+## How it runs (self-hosted)
+
+Renovate runs here as the scheduled workflow [`renovate.yml`](../.github/workflows/renovate.yml), not as the Mend-hosted app (decided 2026-11-13). It uses the existing `lovablegarden-bot` GitHub App (`LOVABLEGARDEN_BOT_APP_ID`, `LOVABLEGARDEN_BOT_PRIVATE_KEY`) and the `ghcr.io/renovatebot/renovate:41` image.
+
+| Setting | Value |
+| --- | --- |
+| Repos | `RENOVATE_REPOSITORIES` in the workflow. Pilot: `lovablegarden-system`, `lovablegarden-security-common`. |
+| Opt-in | `requireConfig=required`, onboarding off: a repo without `renovate.json` is skipped, and Renovate never opens onboarding PRs. |
+| Scheduled runs | Hourly on weekdays, only while the Actions variable `RENOVATE_ENABLED` is `true`. The preset's schedule decides when PRs open. |
+| Manual run | **Actions → Renovate → Run workflow**. `dry_run` (default on) only logs what would happen. |
+
+**App permissions needed before the first real run** (Jessica grants them in the GitHub App settings): Contents, Pull requests, Issues (Dependency Dashboard) and Workflows (Renovate updates `.github/workflows/*`) set to **Read and write**, and Checks and Commit statuses set to **Read**.
+
+**Turning it on:**
+
+1. Grant the app permissions above and accept the permission change for the org installation.
+2. Run **Renovate** by hand with `dry_run` on, and check the log for both pilot repos.
+3. Set the Actions variable `RENOVATE_ENABLED` = `true` (org or this repo).
+
+**Turning it off quickly:** set `RENOVATE_ENABLED` to `false` (or delete it).
+
 ## Rolling out
 
-1. Pilot: one backend service, the frontend, and lovablegarden-system.
+1. Pilot: lovablegarden-system and one backend repo, lovablegarden-security-common (Block A, R1 round). The frontend and other services come later, one PR each, adding the repo to `RENOVATE_REPOSITORIES` too.
 2. Check the first PRs: labels, grouping, and that nothing outside patch/actions auto-merged.
 3. Add `renovate.json` to the remaining active repos, one PR each.
 
@@ -42,6 +63,6 @@ Auto-merge uses GitHub's native auto-merge, so it only happens once the branch p
 | One package | Add a `packageRules` entry with `"enabled": false` to the repo's `renovate.json`. |
 | Auto-merge for one repo | Add `"automerge": false` at the top level and in a final `packageRules` entry matching `"*"`. |
 | One repo | Set `"enabled": false` in its `renovate.json`, or delete the file. |
-| Everything | Revert the preset change here (all repos read it from `main`), or remove the Renovate app's access to the repos. |
+| Everything | Set `RENOVATE_ENABLED` to `false`. To undo config, revert the preset change here (all repos read it from `main`). |
 
 To roll back a merged update, revert its PR. Renovate then sees the older version and proposes the update again on the next schedule unless you ignore it on the dashboard.
