@@ -84,7 +84,8 @@ Make **Secrets** and **Dependencies and IaC** required checks in branch protecti
 `.trivyignore` at the root of `scan-path`, one dated entry per ID under a comment with the Jira key ([policy](cve-policy.md#risk-acceptance)):
 
 ```text
-# Risk acceptance (LG-1216 policy), LG-1234. Accepted 2026-11-14, approved by <name>. Rationale: <why>.
+# Risk acceptance (LG-1216 policy), LG-1234. Accepted 2026-11-14 by <name> (<role>), review by 2027-03-31.
+# Rationale: <why>. Remediation: <Jira key>.
 CVE-2099-0001 exp:2027-03-31
 ```
 
