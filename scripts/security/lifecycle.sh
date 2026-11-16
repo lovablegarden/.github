@@ -109,10 +109,10 @@ if [ -z "$image_json" ]; then
         node) eol nodejs "$major" "$src" ;;
       esac
     done < "$df"
-  done < <(find "$root" -maxdepth 3 -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) -not -path '*/node_modules/*' 2>/dev/null)
+  done < <(find "$root" -maxdepth 3 -type f \( -name 'Dockerfile' -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) -not -path '*/node_modules/*' -not -path "$root/tests/*" 2>/dev/null)
 
   # 3. Spring Boot from the resolved runtime classpath (gradle.lockfile written by the scan).
-  boot=$(find "$root" -name gradle.lockfile -not -path '*/.gradle/*' -exec grep -hoE '^org\.springframework\.boot:spring-boot:[0-9]+\.[0-9]+' {} + 2>/dev/null \
+  boot=$(find "$root" -name gradle.lockfile -not -path '*/.gradle/*' -not -path "$root/tests/*" -not -path "$root/src/test/*" -exec grep -hoE '^org\.springframework\.boot:spring-boot:[0-9]+\.[0-9]+' {} + 2>/dev/null \
     | sed 's/.*://' | sort -uV | head -1 || true)
   [ -n "$boot" ] && eol spring-boot "$boot" "runtimeClasspath"
 else
