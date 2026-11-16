@@ -6,7 +6,8 @@
     ":dependencyDashboard",
     ":semanticCommitTypeAll(chore)",
     ":timezone(Europe/Stockholm)",
-    "helpers:pinGitHubActionDigests"
+    "helpers:pinGitHubActionDigests",
+    "docker:pinDigests"
   ],
   "labels": ["dependencies"],
   "schedule": ["before 7am on monday"],
@@ -116,6 +117,19 @@
     {
       "matchManagers": ["gradle-wrapper"],
       "automerge": false
+    },
+    {
+      "description": "Base images (LG-1224): tag plus digest; digest refreshes grouped into one PR",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["digest", "pin", "pinDigest"],
+      "groupName": "Base image digests",
+      "addLabels": ["base-image"]
+    },
+    {
+      "description": "Dockerfile digest refreshes (same tag, patched OS packages) auto-merge after required checks, runtimes included; compose files never do",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest", "pin", "pinDigest"],
+      "automerge": true
     },
     {
       "description": "Majors: separate PRs, approved from the dependency dashboard first, never auto-merged",

@@ -2,6 +2,15 @@
 
 This repository contains centralized, reusable GitHub Actions workflows for various project types and technologies. These workflows promote consistency, maintainability, and efficiency across all our projects.
 
+## 🔒 Security and supply chain
+
+| Workflow / file | What it does | Docs |
+| --- | --- | --- |
+| `security-scan.yml` | Secrets, dependencies, IaC, image and SAST scans; dated risk acceptances; lifecycle checks; nightly Jira triage | [adopting](docs/security/adopting.md#1-security-scan), [CVE policy](docs/security/cve-policy.md) |
+| `release-provenance.yml` | SBOM, provenance and signed attestations for each release; final-image gate before the system-lock bump | [adopting](docs/security/adopting.md#2-release-provenance), [SBOM and provenance](docs/security/sbom-provenance.md) |
+| `default.json` | Shared Renovate preset: Actions pinned by SHA, base images by digest | [renovate](docs/renovate.md), [lifecycle](docs/security/lifecycle.md) |
+| `SECURITY.md` | Org-wide vulnerability reporting policy | |
+
 ## 📁 Repository Structure
 
 ```
@@ -211,7 +220,7 @@ Docker images are automatically tagged with:
 
 ### 📋 TODO List
 
-- [ ] **Security Scanning**: Add automated security scanning workflows
+- [x] **Security Scanning**: `security-scan.yml` and `release-provenance.yml` (see above)
 - [ ] **Backend Workflows**: Spring Boot, Node.js API, Python, etc.
 - [ ] **OpenAPI Generator**: Centralized model generation workflows
 - [ ] **Mobile Workflows**: React Native, Flutter support

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Fake curl for run-tests.sh: a tiny Jira and endoflife.date. State lives in $FIX/state.
+method=GET url='' data='' cfg=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    -X) method=$2; shift 2 ;;
+    -K) cfg=$2; shift 2 ;;
+    -H|--max-time) shift 2 ;;
+    --data) data=${2#@}; shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+echo "$method $url" >> "$FIX/calls.log"
+# The token must come from the config file, never the command line.
+case "$url" in
+  https://eol.test/*)
+    f="$FIX/eol/$(basename "$(dirname "$url")")-$(basename "$url")"
+    [ -f "$f" ] && { cat "$f"; exit 0; } || exit 22 ;;
+esac
+grep -q 'user = "bot@example.test:test-token"' "$cfg" || { echo "401" >&2; exit 22; }
+[ -f "$FIX/jira.down" ] && exit 22
+case "$method $url" in
+  "POST https://jira.test/rest/api/3/search/jql")
+    label=$(jq -r '.jql' "$data" | sed -E 's/.*labels = "([^"]+)".*/\1/')
+    if [ -f "$FIX/state/$label.json" ]; then jq -c '{issues: [.]}' "$FIX/state/$label.json"; else echo '{"issues":[]}'; fi ;;
+  "POST https://jira.test/rest/api/2/issue")
+    n=$(( $(ls "$FIX/state" | grep -c . ) + 100 ))
+    label=$(jq -r '.fields.labels[] | select(startswith("secfinding-") or startswith("lifecycle-eol-"))' "$data")
+    jq -c --arg k "LG-$n" '{key: $k, fields: {labels: .fields.labels, status: {statusCategory: {key: "new"}}}}' "$data" > "$FIX/state/$label.json"
+    cp "$data" "$FIX/created-LG-$n.json"
+    echo "{\"key\":\"LG-$n\"}" ;;
+  "PUT https://jira.test/rest/api/2/issue/"*)
+    key=${url##*/}; f=$(grep -l "\"$key\"" "$FIX"/state/*.json | head -1)
+    jq -c --slurpfile u "$data" '.fields.labels += [$u[0].update.labels[].add]' "$f" > "$f.tmp" && mv "$f.tmp" "$f" ;;
+  "POST https://jira.test/rest/api/2/issue/"*/comment)
+    cp "$data" "$FIX/comment-$(date +%s%N)-$RANDOM.json"; echo '{}' ;;
+  *) echo "unexpected $method $url" >&2; exit 22 ;;
+esac

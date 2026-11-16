@@ -1,0 +1,5 @@
+[
+  {"kind": "eol", "id": "EOL-spring-boot-3.2", "product": "spring-boot", "cycle": "3.2", "source": "runtimeClasspath", "eol": "2024-12-31", "status": "eol"},
+  {"kind": "eol", "id": "EOL-eclipse-temurin-21", "product": "eclipse-temurin", "cycle": "21", "source": "Dockerfile", "eol": "2029-12-31", "status": "supported"},
+  {"kind": "pin", "id": "PIN-image-eclipse-temurin", "ref": "eclipse-temurin:21-jre-alpine", "source": "Dockerfile", "status": "unpinned"}
+]

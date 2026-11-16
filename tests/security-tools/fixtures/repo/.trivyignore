@@ -1,0 +1,5 @@
+# Spring Boot 3.2 end-of-life accepted until the upgrade, LG-1222.
+EOL-spring-boot-3.2 exp:2027-03-31
+
+# Expired acceptance, LG-1
+CVE-2000-0001 exp:2020-01-01

@@ -20,6 +20,16 @@ on:
         required: false
       LOVABLEGARDEN_BOT_APP_ID:
         required: false
+    outputs:
+      image:
+        description: 'Published image repository, e.g. ghcr.io/lovablegarden/<repo> (LG-1220)'
+        value: ${{ jobs.publish.outputs.image }}
+      digest:
+        description: 'Digest of the pushed release image (index), for release-provenance.yml (LG-1220)'
+        value: ${{ jobs.publish.outputs.digest }}
+      version:
+        description: 'Normalized release version (x.y.z)'
+        value: ${{ jobs.publish.outputs.version }}
 
 permissions:
   contents: read
@@ -30,9 +40,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      image: ghcr.io/${{ github.repository }}
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Normalize version
         id: version
@@ -47,14 +59,14 @@ jobs:
           echo "Docker release tag: $VERSION (from $RAW)"
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: gradle
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
         with:
           gradle-version: wrapper
 
@@ -89,17 +101,18 @@ jobs:
         run: ./gradlew build --no-daemon --stacktrace
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
 
       - name: Build and push release Docker image
-        uses: docker/build-push-action@v5
+        id: build
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: .
           platforms: linux/arm64
@@ -107,6 +120,10 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ghcr.io/${{ github.repository }}:latest
+          # BuildKit's own provenance stays minimal: max mode would record build-arg values,
+          # and GH_PACKAGE_TOKEN is passed as one. The release SBOM and signed provenance come
+          # from release-provenance.yml (LG-1220).
+          provenance: mode=min
           build-args: |
             GITHUB_ACTOR=${{ github.actor }}
             GH_PACKAGE_TOKEN=${{ secrets.GH_PACKAGES_TOKEN || github.token }}
