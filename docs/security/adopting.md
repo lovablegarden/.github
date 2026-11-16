@@ -142,7 +142,7 @@ jobs:
 
 The job permissions are required: a reusable workflow can't get more than its caller grants, and GitHub rejects the run if they are missing.
 
-For a repo without an image (frontend on Cloudflare, libraries), leave out `image` and `digest`: the SBOM then describes the source tree at the tag (lock files), and the provenance file is attested instead of an image.
+For a repo without an image (frontend on Cloudflare, libraries), leave out `image` and `digest`: the SBOM then describes the source tree at the tag (the resolved Gradle runtime graph, or npm lock files; [details](sbom-provenance.md#source-sboms-no-image-libraries-specs-frontend)), and the provenance file is attested instead of an image. The `provenance` job then only needs `needs:` on whatever creates the GitHub Release.
 
 ### Inputs
 
@@ -155,6 +155,8 @@ For a repo without an image (frontend on Cloudflare, libraries), leave out `imag
 | `severity-threshold` | `CRITICAL` | Fixable findings at or above it fail the release. |
 | `gate` | `true` | `false` = report the final-image scan only. |
 | `exception` | `''` | Jira key of an approved exception: failures become warnings and the key is recorded. |
+| `java-version` | `21` | Source mode, Gradle: JDK used to resolve the runtime dependency graph. |
+| `include-dev-deps` | `false` | Source mode, npm: also list devDependencies. Automatic when there are no runtime dependencies. |
 | `attest` | `true` | Sign GitHub artifact attestations. |
 | `dry-run` | `false` | Test mode: no Release upload, and the provenance file is attested instead of the image. |
 
