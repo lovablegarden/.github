@@ -15,11 +15,25 @@ The org is on GitHub Enterprise Cloud, so attestations on private repos are sign
 
 BuildKit's own provenance on the image stays at `mode=min`: max mode would record build-arg values, and the release build passes a package token as a build arg.
 
+## Source SBOMs (no image: libraries, specs, frontend)
+
+Without `image`, the SBOM describes the source tree at the release tag:
+
+| Repo type | What the SBOM lists | How |
+| --- | --- | --- |
+| Gradle (e.g. lovablegarden-security-common) | The resolved `runtimeClasspath` of every project, transitive dependencies included. A BOM/platform project adds nothing (it has constraints, not dependencies). | The workflow locks `runtimeClasspath` into temporary `gradle.lockfile`s (nothing is committed), so no lock file is needed in the repo. JDK from `java-version` (default 21); private packages read with `GH_PACKAGES_TOKEN`. |
+| npm / yarn / pnpm with runtime dependencies (frontend) | `dependencies` from the lock file | Trivy reads the lock file. |
+| npm with only devDependencies (e.g. lovablegarden-openapi-spec) | The devDependencies: the build tooling that generates and publishes the release | Automatic when there are no runtime dependencies, or always with `include-dev-deps: true`. `provenance.json` then says `"dev_dependencies": true`. |
+
+The API clients that openapi-spec publishes are generated at release time and aren't in its tree. Their runtime dependencies reach production inside the services, so they appear in each service's image SBOM.
+
+If the SBOM is still empty (no lock file, no `runtimeClasspath`), the job fails and says so. A repo that really ships no third-party dependencies releases with an `exception` naming the Jira issue that records that.
+
 ## Gate: what makes a release production-eligible
 
 `release-provenance.yml` fails, after uploading whatever evidence it has, when:
 
-- the SBOM couldn't be generated, or a container SBOM has no operating-system component, or
+- the SBOM couldn't be generated or lists no components, or a container SBOM has no operating-system component, or
 - the final image has fixable findings at or above `severity-threshold` (default CRITICAL) that the repo's `.trivyignore` doesn't accept ([risk acceptance](cve-policy.md#risk-acceptance)).
 
 The caller runs the system-lock bump only after this job (`needs: [publish-docker, provenance]`), so a failed run keeps the release out of `lovablegarden-system` and away from stage and prod.
@@ -41,7 +55,7 @@ The caller runs the system-lock bump only after this job (`needs: [publish-docke
   "build": {"workflow": "lovablegarden/lovablegarden-tasks/.github/workflows/release-published.yml@refs/tags/…",
             "run": "https://github.com/…/actions/runs/…/attempts/1", "event": "release", "actor": "…"},
   "sbom": {"file": "sbom-lovablegarden-tasks-1.1.30.cdx.json", "format": "CycloneDX", "generator": "trivy 0.76.1",
-           "status": "success", "sha256": "…", "components": 312},
+           "status": "success", "sha256": "…", "components": 312, "dev_dependencies": false},
   "scan": {"tool": "trivy 0.76.1", "db_updated": "…", "status": "success", "threshold": "CRITICAL",
            "fixable_at_or_above_threshold": 0, "accepted_risks": ["CVE-2099-0001"]},
   "exception": null,
