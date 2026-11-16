@@ -87,10 +87,14 @@ Releases from before this workflow was adopted have no SBOM. For those, generate
 **Is this image what we released?** Verify the signed attestation:
 
 ```bash
-gh attestation verify oci://ghcr.io/lovablegarden/lovablegarden-tasks:1.1.30 --owner lovablegarden
-gh attestation verify oci://ghcr.io/lovablegarden/lovablegarden-tasks:1.1.30 --owner lovablegarden \
-  --predicate-type https://cyclonedx.org/bom
+sw=lovablegarden/.github/.github/workflows/release-provenance.yml   # the reusable workflow signs
+gh attestation verify oci://ghcr.io/lovablegarden/lovablegarden-tasks:1.1.30 \
+  --repo lovablegarden/lovablegarden-tasks --signer-workflow "$sw"
+gh attestation verify oci://ghcr.io/lovablegarden/lovablegarden-tasks:1.1.30 \
+  --repo lovablegarden/lovablegarden-tasks --signer-workflow "$sw" --predicate-type https://cyclonedx.org/bom
 ```
+
+Without `--signer-workflow` (or `--signer-repo lovablegarden/.github`), `gh` expects the signer to be a workflow in the service repo itself and rejects the attestation.
 
 ## Reconciling deployed images with the lock and the releases
 
