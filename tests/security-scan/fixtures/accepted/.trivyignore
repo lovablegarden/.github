@@ -1,2 +1,3 @@
-# Dated risk acceptance (test fixture, LG-1216): minimist 1.2.5 accepted until 2099, approved by the test.
+# Risk acceptance (LG-1216 policy), LG-1216. Accepted 2026-11-16 by the test suite (fixture), review by 2099-12-31.
+# Rationale: inert fixture; minimist 1.2.5 is never installed.
 CVE-2021-44906 exp:2099-12-31
