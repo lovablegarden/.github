@@ -84,7 +84,7 @@ jobs:
 
       - name: Create GitHub App token (read prod lock)
         id: content-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
@@ -93,7 +93,7 @@ jobs:
           permission-contents: read
 
       - name: Checkout lovablegarden-system (prod lock pins)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: lovablegarden/lovablegarden-system
           ref: main

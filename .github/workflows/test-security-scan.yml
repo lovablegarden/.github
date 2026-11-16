@@ -1,13 +1,17 @@
 name: Test security scan
 
-# Proves both paths of the reusable security-scan.yml (LG-1218): this repo scans clean,
-# and the inert fixtures in tests/security-scan/fixtures/vulnerable are caught.
+# Proves the reusable security-scan.yml (LG-1218, LG-1216, LG-1224): this repo scans clean,
+# the inert fixtures in tests/security-scan/fixtures are caught, a dated risk acceptance hides
+# a finding until its expiry and no longer after it, and the Jira triage (dry run, no secrets)
+# picks the findings the policy says need an owned issue.
 on:
   pull_request:
     paths:
       - '.github/workflows/security-scan.yml'
       - '.github/workflows/test-security-scan.yml'
+      - 'scripts/security/**'
       - 'tests/security-scan/**'
+      - 'tests/security-tools/**'
       - '.gitleaks.toml'
       - 'trivy.yaml'
   push:
@@ -15,7 +19,9 @@ on:
     paths:
       - '.github/workflows/security-scan.yml'
       - '.github/workflows/test-security-scan.yml'
+      - 'scripts/security/**'
       - 'tests/security-scan/**'
+      - 'tests/security-tools/**'
       - '.gitleaks.toml'
       - 'trivy.yaml'
   workflow_dispatch:
@@ -27,6 +33,10 @@ permissions:
 jobs:
   clean:
     uses: ./.github/workflows/security-scan.yml
+    with:
+      artifact-prefix: clean
+      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      jira-triage: 'off'
 
   vulnerable:
     uses: ./.github/workflows/security-scan.yml
@@ -36,24 +46,56 @@ jobs:
       image-platform: linux/amd64
       image-on-pr: true
       enforce: false
+      artifact-prefix: vulnerable
+      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      jira-triage: 'always'     # no Jira secrets here: a dry run
+      fail-on-kev: false
+
+  accepted:
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      scan-path: tests/security-scan/fixtures/accepted
+      artifact-prefix: accepted
+      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      jira-triage: 'off'
 
   assert:
-    needs: [clean, vulnerable]
+    needs: [clean, vulnerable, accepted]
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check findings
         env:
+          RESULTS: ${{ toJSON(needs) }}
           CLEAN_SECRETS: ${{ needs.clean.outputs.secrets }}
           CLEAN_DEPS: ${{ needs.clean.outputs.dependencies }}
+          CLEAN_LIFECYCLE: ${{ needs.clean.outputs.lifecycle }}
           VULN_SECRETS: ${{ needs.vulnerable.outputs.secrets }}
           VULN_DEPS: ${{ needs.vulnerable.outputs.dependencies }}
           VULN_IMAGE: ${{ needs.vulnerable.outputs.image }}
+          VULN_TRIAGE: ${{ needs.vulnerable.outputs.triage }}
+          ACC_DEPS: ${{ needs.accepted.outputs.dependencies }}
+          ACC_RISKS: ${{ needs.accepted.outputs.accepted-risks }}
         run: |
           fail=0
           check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fail=1; fi; }
+          check "all three scans succeeded" '[ "$(jq -r "[.[].result] | unique | join(\",\")" <<<"$RESULTS")" = success ]'
           check "clean repo: 0 secrets (got '$CLEAN_SECRETS')"                '[ "${CLEAN_SECRETS:-x}" = 0 ]'
           check "clean repo: 0 gating dependency findings (got '$CLEAN_DEPS')" '[ "${CLEAN_DEPS:-x}" = 0 ]'
+          check "clean repo: every Action pinned (got '$CLEAN_LIFECYCLE')"     '[ "${CLEAN_LIFECYCLE:-x}" = 0 ]'
           check "fixture: secret found (got '$VULN_SECRETS')"                  '[ "${VULN_SECRETS:-0}" -ge 1 ]'
-          check "fixture: minimist CRITICAL found (got '$VULN_DEPS')"          '[ "${VULN_DEPS:-0}" -ge 1 ]'
+          check "fixture: minimist CRITICAL found despite its expired acceptance (got '$VULN_DEPS')" '[ "${VULN_DEPS:-0}" -ge 1 ]'
           check "fixture: image CRITICAL found (got '$VULN_IMAGE')"            '[ "${VULN_IMAGE:-0}" -ge 1 ]'
+          check "fixture: triage dry run picked findings (got '$VULN_TRIAGE')" '[ "${VULN_TRIAGE:-0}" -ge 1 ]'
+          check "accepted: dated acceptance hides minimist (got '$ACC_DEPS')"  '[ "${ACC_DEPS:-x}" = 0 ]'
+          check "accepted: one active acceptance listed (got '$ACC_RISKS')"    '[ "${ACC_RISKS:-x}" = 1 ]'
           exit $fail
+
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Script tests (stubbed Jira and endoflife.date)
+        run: bash tests/security-tools/run-tests.sh

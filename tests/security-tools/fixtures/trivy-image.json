@@ -1,0 +1,16 @@
+{
+  "ArtifactName": "ghcr.io/lovablegarden/example@sha256:1111",
+  "ArtifactType": "container_image",
+  "Metadata": {"OS": {"Family": "alpine", "Name": "3.19.1", "EOSL": false}},
+  "Results": [
+    {"Target": "ghcr.io/lovablegarden/example (alpine 3.19.1)", "Vulnerabilities": [
+      {"VulnerabilityID": "CVE-2099-0001", "PkgName": "libexample", "InstalledVersion": "1.0", "FixedVersion": "1.1", "Severity": "CRITICAL", "Title": "fixable critical"},
+      {"VulnerabilityID": "CVE-2099-0002", "PkgName": "libnofix", "InstalledVersion": "1.0", "Severity": "CRITICAL", "Title": "critical, no fix"},
+      {"VulnerabilityID": "CVE-2099-0003", "PkgName": "libhigh", "InstalledVersion": "2.0", "FixedVersion": "2.1", "Severity": "HIGH", "Title": "high, fixable"},
+      {"VulnerabilityID": "CVE-2099-0004", "PkgName": "libkev", "InstalledVersion": "3.0", "Severity": "MEDIUM", "Title": "medium, known exploited"}
+    ]},
+    {"Target": "app/app.jar", "Vulnerabilities": [
+      {"VulnerabilityID": "CVE-2099-0001", "PkgName": "libexample", "InstalledVersion": "1.0", "FixedVersion": "1.1", "Severity": "CRITICAL", "Title": "same finding, second target"}
+    ]}
+  ]
+}

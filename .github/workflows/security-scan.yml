@@ -21,10 +21,19 @@ name: Security Scan
 #   enforce-on: always                  main, nightly and image runs fail too. Switch a repo
 #                                       to this once its baseline is cleared.
 # Secrets always fail, on every event.
-# Accepted findings go in `.trivyignore` / `.gitleaksignore` at the root of `scan-path`,
-# each with a comment naming the Jira issue that accepts it.
+# Accepted findings go in `.trivyignore` / `.gitleaksignore` at the root of `scan-path`.
+# A `.trivyignore` entry is a dated risk acceptance (LG-1216): `<ID> exp:YYYY-MM-DD`, under a
+# comment naming the Jira issue. Trivy reports the ID again from its expiry date. The same
+# file is applied to the image scan, and the job summary lists every acceptance and warns
+# 30 days before one expires.
 #
-# Caller, `.github/workflows/security-scan.yml` in each repo:
+# Also (report only, docs/security/lifecycle.md, LG-1224): unpinned Actions and base images,
+# and end-of-life Spring Boot, Java, Node and image OS versions.
+# Scheduled runs file KEV-listed and fixable CRITICAL findings and end-of-life components in
+# Jira, one issue per finding across all repos (docs/security/cve-policy.md, LG-1216). Without
+# the Jira secrets this is a dry run in the job summary.
+#
+# Caller, `.github/workflows/security-scan.yml` in each repo (docs/security/adopting.md):
 #   on:
 #     pull_request: { branches: [main] }
 #     push: { branches: [main] }
@@ -35,7 +44,10 @@ name: Security Scan
 #     security:
 #       uses: lovablegarden/.github/.github/workflows/security-scan.yml@main
 #       with: { image: ghcr.io/lovablegarden/<repo>:latest }
-#       secrets: { GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }} }
+#       secrets:
+#         GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+#         JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+#         JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
 #
 # It is a separate caller, not a job in ci.yml: ci.yml publishes an image on every main
 # run, so a schedule there would republish `latest` nightly.
@@ -81,11 +93,42 @@ on:
         description: 'Fail on Semgrep ERROR findings. Report only by default.'
         type: boolean
         default: false
+      jira-triage:
+        description: 'scheduled = file Jira issues on schedule/dispatch runs (default), always = every event, off = never'
+        type: string
+        default: 'scheduled'
+      fail-on-kev:
+        description: 'Fail the triage job when a CISA KEV (known exploited) finding is present, so the run notifies'
+        type: boolean
+        default: true
+      artifact-prefix:
+        description: 'Prefix of the report artifact names. Only needed when one run calls this workflow twice.'
+        type: string
+        default: 'security'
+      tooling-ref:
+        description: 'Ref of lovablegarden/.github whose scripts/security/ this run uses. Tests set it to the PR commit.'
+        type: string
+        default: 'main'
     secrets:
       GH_PACKAGES_TOKEN:
         description: 'Reads private Maven packages and GHCR images. Falls back to github.token.'
         required: false
+      JIRA_USER_EMAIL:
+        description: 'Jira account for the triage job. With JIRA_API_TOKEN and the JIRA_BASE_URL variable; otherwise a dry run.'
+        required: false
+      JIRA_API_TOKEN:
+        description: 'Jira API token for the triage job'
+        required: false
     outputs:
+      accepted-risks:
+        description: 'Active dated risk acceptances in .trivyignore'
+        value: ${{ jobs.dependencies.outputs.accepted }}
+      lifecycle:
+        description: 'End-of-life components and unpinned references found (report only)'
+        value: ${{ jobs.dependencies.outputs.lifecycle }}
+      triage:
+        description: 'Findings that need an owned Jira item (empty if triage did not run)'
+        value: ${{ jobs.triage.outputs.candidates }}
       secrets:
         description: 'Number of gitleaks findings'
         value: ${{ jobs.secrets.outputs.findings }}
@@ -190,7 +233,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: security-gitleaks
+          name: ${{ inputs.artifact-prefix }}-gitleaks
           path: ${{ runner.temp }}/gitleaks.sarif
           if-no-files-found: ignore
           retention-days: 14
@@ -202,6 +245,8 @@ jobs:
     outputs:
       findings: ${{ steps.gate.outputs.findings }}
       new-findings: ${{ steps.gate.outputs.new-findings }}
+      accepted: ${{ steps.acceptances.outputs.accepted }}
+      lifecycle: ${{ steps.lifecycle.outputs.findings }}
     defaults:
       run:
         working-directory: ${{ inputs.scan-path }}
@@ -210,6 +255,19 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Checkout org security scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: .lg-tooling
+          sparse-checkout: scripts/security
+          persist-credentials: false
+
+      - name: Move org scripts out of the workspace
+        working-directory: .
+        run: mv .lg-tooling "$RUNNER_TEMP/lg-tooling"
 
       - name: Checkout PR base (to tell new findings from existing ones)
         if: github.event_name == 'pull_request'
@@ -361,10 +419,29 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: security-trivy-fs
+          name: ${{ inputs.artifact-prefix }}-trivy-fs
           path: |
             ${{ runner.temp }}/trivy.json
             ${{ runner.temp }}/trivy.sarif
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Risk acceptances (.trivyignore)
+        id: acceptances
+        run: bash "$RUNNER_TEMP/lg-tooling/scripts/security/risk-acceptances.sh" .trivyignore >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Lifecycle (pinning and end-of-life, report only)
+        id: lifecycle
+        env:
+          LIFECYCLE_JSON: ${{ runner.temp }}/lifecycle-repo.json
+        run: bash "$RUNNER_TEMP/lg-tooling/scripts/security/lifecycle.sh" . >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lifecycle report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-lifecycle-repo
+          path: ${{ runner.temp }}/lifecycle-repo.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -375,7 +452,7 @@ jobs:
         run: &trivy-gate |
           set -euo pipefail
           echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
-          hint="Upgrade, or add the ID to .trivyignore with the Jira issue that accepts it. Details in the job summary."
+          hint="Upgrade, or accept the risk in .trivyignore as '<ID> exp:YYYY-MM-DD' under a comment naming the Jira issue (docs/security/cve-policy.md). Details in the job summary."
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ] && [ -s "$RUNNER_TEMP/trivy-base.json" ]; then
             new=$(comm -23 "$RUNNER_TEMP/gating.txt" "$RUNNER_TEMP/gating-base.txt" | grep -c . || true)
             echo "new-findings=$new" >> "$GITHUB_OUTPUT"
@@ -399,6 +476,22 @@ jobs:
     outputs:
       findings: ${{ steps.gate.outputs.findings }}
     steps:
+      - name: Checkout the risk acceptances (.trivyignore only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .trivyignore
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Checkout org security scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: .lg-tooling
+          sparse-checkout: scripts/security
+          persist-credentials: false
+
       - name: Install Trivy ${{ env.TRIVY_VERSION }}
         run: *install-trivy
 
@@ -422,7 +515,24 @@ jobs:
             ghcr.io/*) export TRIVY_USERNAME="$GHCR_USER" TRIVY_PASSWORD="$GHCR_TOKEN" ;;
           esac
           unset GHCR_TOKEN
-          trivy image --scanners vuln --format json --output "$RUNNER_TEMP/trivy.json" "$IMAGE"
+          # The repo's dated risk acceptances apply to its image too.
+          ignore=()
+          if [ -f "$SCAN_PATH/.trivyignore" ]; then ignore=(--ignorefile "$SCAN_PATH/.trivyignore"); fi
+          trivy image --scanners vuln "${ignore[@]}" --format json --output "$RUNNER_TEMP/trivy.json" "$IMAGE"
+
+      - name: Lifecycle (image OS end-of-life, report only)
+        env:
+          LIFECYCLE_JSON: ${{ runner.temp }}/lifecycle-image.json
+        run: bash .lg-tooling/scripts/security/lifecycle.sh "$SCAN_PATH" "$RUNNER_TEMP/trivy.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lifecycle report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-lifecycle-image
+          path: ${{ runner.temp }}/lifecycle-image.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Report
         id: report
@@ -434,7 +544,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: security-trivy-image
+          name: ${{ inputs.artifact-prefix }}-trivy-image
           path: |
             ${{ runner.temp }}/trivy.json
             ${{ runner.temp }}/trivy.sarif
@@ -489,7 +599,61 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: security-semgrep
+          name: ${{ inputs.artifact-prefix }}-semgrep
           path: ${{ runner.temp }}/semgrep/
           if-no-files-found: ignore
           retention-days: 14
+
+  triage:
+    name: Jira triage (KEV, CRITICAL, end-of-life)
+    needs: [dependencies, image]
+    # Runs after the scans whatever their gates said; a skipped image job is fine.
+    if: >-
+      always() && !cancelled() && needs.dependencies.result != 'skipped'
+      && (inputs.jira-triage == 'always'
+          || (inputs.jira-triage == 'scheduled' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      candidates: ${{ steps.triage.outputs.candidates }}
+    steps:
+      - name: Checkout org security scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: .lg-tooling
+          sparse-checkout: scripts/security
+          persist-credentials: false
+
+      - name: Download scan reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: ${{ inputs.artifact-prefix }}-{trivy-fs,trivy-image,lifecycle-repo,lifecycle-image}
+          path: ${{ runner.temp }}/reports
+
+      - name: Fetch the CISA KEV catalogue
+        run: |
+          # Public data; without it nothing counts as known exploited, so warn rather than fail.
+          curl -fsSL --max-time 60 -o "$RUNNER_TEMP/kev.json" \
+            https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json \
+            && jq -e '.vulnerabilities | length > 0' "$RUNNER_TEMP/kev.json" > /dev/null \
+            || { echo "::warning::Could not fetch the CISA KEV catalogue; KEV findings are not flagged in this run"; rm -f "$RUNNER_TEMP/kev.json"; }
+
+      - name: Triage
+        id: triage
+        env:
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ vars.JIRA_PROJECT_KEY || 'LG' }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          FAIL_ON_KEV: ${{ inputs.fail-on-kev }}
+        run: |
+          set -euo pipefail
+          r="$RUNNER_TEMP/reports"
+          export TRIVY_JSON="$(ls "$r"/*-trivy-fs/trivy.json "$r"/*-trivy-image/trivy.json 2>/dev/null | tr '\n' ' ')"
+          export LIFECYCLE_JSON="$(ls "$r"/*-lifecycle-*/lifecycle-*.json 2>/dev/null | tr '\n' ' ')"
+          export KEV_JSON="$RUNNER_TEMP/kev.json"
+          bash .lg-tooling/scripts/security/cve-triage.sh >> "$GITHUB_STEP_SUMMARY"

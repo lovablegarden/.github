@@ -2,3 +2,4 @@
 scan:
   skip-dirs:
     - tests/security-scan/fixtures
+    - tests/security-tools/fixtures

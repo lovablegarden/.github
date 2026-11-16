@@ -1,0 +1,373 @@
+name: Release Provenance
+
+# SBOM, provenance and a final-image scan for every deployable release (LG-1220, LG-1224).
+# docs/security/sbom-provenance.md explains how to use the output.
+#
+# For a release image (or, without `image`, the source tree at the release tag) it:
+#   1. writes a CycloneDX SBOM of the final image by digest: OS packages and bundled jars
+#   2. scans that image for vulnerabilities with the repo's .trivyignore (dated risk acceptances)
+#   3. writes provenance.json: repo, tag, commit, workflow run, image digest, base images, SBOM hash
+#   4. attaches the SBOM and provenance to the GitHub Release (kept with the release) and to the
+#      run as an artifact (90 days)
+#   5. signs GitHub artifact attestations for the image: SLSA build provenance and the SBOM,
+#      also pushed to GHCR next to the image (`gh attestation verify oci://...`)
+#   6. fails, after uploading the evidence, when the SBOM is missing or the image has fixable
+#      findings at or above `severity-threshold`, unless `exception` names the Jira issue that
+#      records an exception. The caller chains the system-lock bump after this job, so a failed
+#      run keeps the release out of lovablegarden-system.
+#
+# Caller: a job in the service's release-published.yml, after publish-docker:
+#   provenance:
+#     needs: [publish-docker]
+#     permissions: { contents: write, packages: write, id-token: write, attestations: write }
+#     uses: lovablegarden/.github/.github/workflows/release-provenance.yml@main
+#     with:
+#       release-tag: ${{ github.event.release.tag_name || github.event.inputs.version }}
+#       image: ${{ needs.publish-docker.outputs.image }}
+#       digest: ${{ needs.publish-docker.outputs.digest }}
+#     secrets: { GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }} }
+#   bump-system-lock:
+#     needs: [publish-docker, provenance]
+
+on:
+  workflow_call:
+    inputs:
+      release-tag:
+        description: 'Git tag of the GitHub Release, e.g. lovablegarden-tasks-v1.1.29 or v1.2.3'
+        type: string
+        required: true
+      image:
+        description: 'Image repository without tag, e.g. ghcr.io/lovablegarden/<repo>. Empty = SBOM of the source tree (frontend, libraries).'
+        type: string
+        default: ''
+      digest:
+        description: 'Digest of the released image (sha256:...). Empty = resolve the tag <image>:<version> now.'
+        type: string
+        default: ''
+      image-platform:
+        description: 'Platform scanned and described in the SBOM. The org builds linux/arm64.'
+        type: string
+        default: 'linux/arm64'
+      severity-threshold:
+        description: 'Lowest severity of a fixable finding that fails the release: CRITICAL, HIGH or MEDIUM'
+        type: string
+        default: 'CRITICAL'
+      gate:
+        description: 'Fail when the image has fixable findings at or above the threshold'
+        type: boolean
+        default: true
+      exception:
+        description: 'Jira key recording an approved exception. Turns SBOM and gate failures into warnings, and is written into provenance.json.'
+        type: string
+        default: ''
+      attest:
+        description: 'Sign GitHub artifact attestations (needs id-token: write and attestations: write)'
+        type: boolean
+        default: true
+      dry-run:
+        description: 'Test mode: do not touch the GitHub Release, and attest the provenance file instead of the image'
+        type: boolean
+        default: false
+    secrets:
+      GH_PACKAGES_TOKEN:
+        description: 'Reads private GHCR images and Maven packages. Falls back to github.token.'
+        required: false
+    outputs:
+      digest:
+        description: 'Image digest the evidence describes'
+        value: ${{ jobs.provenance.outputs.digest }}
+      sbom-sha256:
+        description: 'SHA-256 of the SBOM file'
+        value: ${{ jobs.provenance.outputs.sbom-sha256 }}
+      findings:
+        description: 'Fixable findings at or above the threshold, after risk acceptances'
+        value: ${{ jobs.provenance.outputs.findings }}
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  TRIVY_VERSION: '0.76.1'
+  TRIVY_SHA256: 'c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0'
+  TRIVY_CACHE_DIR: /home/runner/.cache/trivy
+  TRIVY_NO_PROGRESS: 'true'
+  TRIVY_DISABLE_VEX_NOTICE: 'true'
+
+jobs:
+  provenance:
+    name: SBOM, provenance and final-image scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      digest: ${{ steps.subject.outputs.digest }}
+      sbom-sha256: ${{ steps.sbom.outputs.sha256 }}
+      findings: ${{ steps.scan.outputs.findings }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.release-tag }}
+          persist-credentials: false
+
+      - name: Install Trivy ${{ env.TRIVY_VERSION }}
+        run: |
+          set -euo pipefail
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" trivy
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Cache Trivy DB
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ github.run_id }}-${{ github.run_attempt }}-provenance
+          restore-keys: trivy-db-
+
+      - name: Log in to GHCR
+        if: inputs.image != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+
+      - name: Resolve the release subject
+        id: subject
+        env:
+          TAG: ${{ inputs.release-tag }}
+          IMAGE: ${{ inputs.image }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          version=$(sed 's/^v//' <<<"$TAG" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' | tail -1 || true)
+          [ -n "$version" ] || { echo "::error::No semver in release tag '$TAG'"; exit 1; }
+          commit=$(git rev-parse HEAD)
+          name="${GITHUB_REPOSITORY##*/}-${version}"
+          if [ -n "$IMAGE" ]; then
+            case "$IMAGE" in *:*|*@*) echo "::error::image must be a repository without tag or digest: $IMAGE"; exit 1 ;; esac
+            if [ -z "$DIGEST" ]; then
+              DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{json .Manifest}}' | jq -r .digest)
+              echo "::notice::Resolved ${IMAGE}:${version} to ${DIGEST}"
+            fi
+            grep -qE '^sha256:[0-9a-f]{64}$' <<<"$DIGEST" || { echo "::error::Not an image digest: '$DIGEST'"; exit 1; }
+            # The tag must still point at the digest being described.
+            now=$(docker buildx imagetools inspect "${IMAGE}:${version}" --format '{{json .Manifest}}' | jq -r .digest)
+            [ "$now" = "$DIGEST" ] || echo "::warning::${IMAGE}:${version} now points at ${now}, not ${DIGEST}; describing ${DIGEST}"
+            ref="${IMAGE}@${DIGEST}"
+          else
+            ref=""
+          fi
+          {
+            echo "version=$version"; echo "commit=$commit"; echo "name=$name"
+            echo "digest=$DIGEST"; echo "ref=$ref"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/evidence"
+
+      - name: SBOM (CycloneDX)
+        id: sbom
+        continue-on-error: true
+        env:
+          REF: ${{ steps.subject.outputs.ref }}
+          NAME: ${{ steps.subject.outputs.name }}
+          TRIVY_PLATFORM: ${{ inputs.image-platform }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/evidence/sbom-${NAME}.cdx.json"
+          if [ -n "$REF" ]; then
+            case "$REF" in ghcr.io/*) export TRIVY_USERNAME="$GHCR_USER" TRIVY_PASSWORD="$GHCR_TOKEN" ;; esac
+            unset GHCR_TOKEN
+            trivy image --format cyclonedx --output "$out" "$REF"
+            # A container SBOM must describe the final image, OS packages included.
+            jq -e '[.components[]? | select(.type == "operating-system")] | length > 0' "$out" > /dev/null \
+              || { echo "::error::The SBOM has no operating-system component"; exit 1; }
+          else
+            trivy fs --format cyclonedx --output "$out" .
+          fi
+          n=$(jq '[.components[]?] | length' "$out")
+          [ "$n" -gt 0 ] || { echo "::error::The SBOM lists no components"; exit 1; }
+          sum=$(sha256sum "$out" | cut -d' ' -f1)
+          { echo "file=$out"; echo "sha256=$sum"; echo "components=$n"; } >> "$GITHUB_OUTPUT"
+
+      - name: Final-image scan (with the repo's dated risk acceptances)
+        id: scan
+        if: inputs.image != ''
+        continue-on-error: true
+        env:
+          REF: ${{ steps.subject.outputs.ref }}
+          THRESHOLD: ${{ inputs.severity-threshold }}
+          TRIVY_PLATFORM: ${{ inputs.image-platform }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          case "$REF" in ghcr.io/*) export TRIVY_USERNAME="$GHCR_USER" TRIVY_PASSWORD="$GHCR_TOKEN" ;; esac
+          unset GHCR_TOKEN
+          ignore=(); [ -f .trivyignore ] && ignore=(--ignorefile .trivyignore)
+          r="$RUNNER_TEMP/evidence/trivy-image.json"
+          trivy image --scanners vuln "${ignore[@]}" --format json --output "$r" "$REF"
+          case "$THRESHOLD" in
+            CRITICAL) sev='["CRITICAL"]' ;; HIGH) sev='["CRITICAL","HIGH"]' ;; MEDIUM) sev='["CRITICAL","HIGH","MEDIUM"]' ;;
+            *) echo "::error::severity-threshold must be CRITICAL, HIGH or MEDIUM"; exit 2 ;;
+          esac
+          jq -r --argjson sev "$sev" '.Results[]? | (.Vulnerabilities // [])[]
+            | select((.FixedVersion // "") != "") | select(.Severity as $s | $sev | index($s))
+            | "| \(.Severity) | \(.PkgName) | \(.InstalledVersion) | \(.FixedVersion) | \(.VulnerabilityID) |"' "$r" | sort -u > "$RUNNER_TEMP/gating.md"
+          n=$(grep -c . "$RUNNER_TEMP/gating.md" || true)
+          accepted=$( [ -f .trivyignore ] && grep -oE '^[A-Za-z0-9._-]+' .trivyignore | paste -sd, - || true)
+          db=$(trivy version --format json 2>/dev/null | jq -r '.VulnerabilityDB.UpdatedAt // ""' || true)
+          { echo "findings=$n"; echo "accepted=$accepted"; echo "db=$db"; } >> "$GITHUB_OUTPUT"
+
+      - name: Provenance record
+        id: record
+        if: always() && steps.subject.outcome == 'success'
+        env:
+          TAG: ${{ inputs.release-tag }}
+          IMAGE: ${{ inputs.image }}
+          PLATFORM: ${{ inputs.image-platform }}
+          V: ${{ steps.subject.outputs.version }}
+          COMMIT: ${{ steps.subject.outputs.commit }}
+          NAME: ${{ steps.subject.outputs.name }}
+          DIGEST: ${{ steps.subject.outputs.digest }}
+          SBOM_OK: ${{ steps.sbom.outcome }}
+          SBOM_SHA: ${{ steps.sbom.outputs.sha256 }}
+          SBOM_N: ${{ steps.sbom.outputs.components }}
+          SCAN_OK: ${{ steps.scan.outcome }}
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          ACCEPTED: ${{ steps.scan.outputs.accepted }}
+          DB: ${{ steps.scan.outputs.db }}
+          THRESHOLD: ${{ inputs.severity-threshold }}
+          EXCEPTION: ${{ inputs.exception }}
+          DRY_RUN: ${{ inputs.dry-run }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # Base images as written in the Dockerfile(s) at the release tag.
+          bases=$(find . -maxdepth 3 -type f \( -name Dockerfile -o -name 'Dockerfile.*' \) -not -path './node_modules/*' \
+            -exec awk 'toupper($1) == "FROM" { for (i = 2; i <= NF; i++) if ($i !~ /^--/) { print $i; break } }' {} + 2>/dev/null \
+            | jq -Rsc 'split("\n") | map(select(. != ""))')
+          out="$RUNNER_TEMP/evidence/provenance-${NAME}.json"
+          jq -n \
+            --arg repo "$GITHUB_REPOSITORY" --arg tag "$TAG" --arg v "$V" --arg commit "$COMMIT" \
+            --arg image "$IMAGE" --arg digest "$DIGEST" --arg platform "$PLATFORM" --argjson bases "$bases" \
+            --arg wf "$WORKFLOW_REF" --arg run "$RUN_URL" --arg event "$GITHUB_EVENT_NAME" --arg actor "$GITHUB_ACTOR" \
+            --arg sbom_ok "$SBOM_OK" --arg sbom_sha "$SBOM_SHA" --arg sbom_n "$SBOM_N" --arg sbom_file "sbom-${NAME}.cdx.json" \
+            --arg scan_ok "$SCAN_OK" --arg findings "$FINDINGS" --arg accepted "$ACCEPTED" --arg db "$DB" --arg threshold "$THRESHOLD" \
+            --arg trivy "$TRIVY_VERSION" --arg exception "$EXCEPTION" --arg dry "$DRY_RUN" '
+            { schema: "https://github.com/lovablegarden/.github/blob/main/docs/security/sbom-provenance.md#provenancejson-v1",
+              repository: $repo, release_tag: $tag, version: $v, commit: $commit,
+              image: (if $image == "" then null else {repository: $image, digest: $digest, reference: "\($image)@\($digest)", platform: $platform} end),
+              base_images: $bases,
+              build: {workflow: $wf, run: $run, event: $event, actor: $actor},
+              sbom: {file: $sbom_file, format: "CycloneDX", generator: "trivy \($trivy)", status: $sbom_ok,
+                     sha256: (if $sbom_sha == "" then null else $sbom_sha end),
+                     components: (if $sbom_n == "" then null else ($sbom_n | tonumber) end)},
+              scan: (if $image == "" then null else
+                     {tool: "trivy \($trivy)", db_updated: $db, status: $scan_ok, threshold: $threshold,
+                      fixable_at_or_above_threshold: (if $findings == "" then null else ($findings | tonumber) end),
+                      accepted_risks: ($accepted | split(",") | map(select(. != "")))} end),
+              exception: (if $exception == "" then null else $exception end),
+              dry_run: ($dry == "true"),
+              generated_at: (now | todate) }' > "$out"
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release provenance (LG-1220)"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Release | \`${TAG}\` at \`${COMMIT}\` |"
+            [ -n "$IMAGE" ] && echo "| Image | \`${IMAGE}@${DIGEST}\` (${PLATFORM}) |"
+            echo "| SBOM | ${SBOM_OK}: ${SBOM_N:-0} components, sha256 \`${SBOM_SHA:--}\` |"
+            [ -n "$IMAGE" ] && echo "| Final-image scan | ${SCAN_OK}: ${FINDINGS:-?} fixable ${THRESHOLD}+ after accepted risks (${ACCEPTED:-none}) |"
+            [ -n "$EXCEPTION" ] && echo "| Exception | ${EXCEPTION} |"
+            echo "| Run | ${RUN_URL} |"
+            if [ -s "$RUNNER_TEMP/gating.md" ]; then
+              echo; echo "| Severity | Package | Installed | Fixed | ID |"; echo "| --- | --- | --- | --- | --- |"
+              head -100 "$RUNNER_TEMP/gating.md"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence (run artifact)
+        if: always() && steps.record.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-provenance-${{ steps.subject.outputs.name }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90
+
+      - name: Attach evidence to the GitHub Release
+        if: always() && steps.record.outcome == 'success' && !inputs.dry-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release-tag }}
+          NAME: ${{ steps.subject.outputs.name }}
+        run: |
+          set -euo pipefail
+          files=("$RUNNER_TEMP/evidence/provenance-${NAME}.json")
+          [ -s "$RUNNER_TEMP/evidence/sbom-${NAME}.cdx.json" ] && files+=("$RUNNER_TEMP/evidence/sbom-${NAME}.cdx.json")
+          gh release upload "$TAG" "${files[@]}" --clobber -R "$GITHUB_REPOSITORY"
+
+      - name: Attest build provenance (image)
+        if: inputs.attest && !inputs.dry-run && inputs.image != '' && steps.subject.outputs.digest != ''
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ inputs.image }}
+          subject-digest: ${{ steps.subject.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest SBOM (image)
+        if: inputs.attest && !inputs.dry-run && inputs.image != '' && steps.sbom.outcome == 'success'
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-name: ${{ inputs.image }}
+          subject-digest: ${{ steps.subject.outputs.digest }}
+          sbom-path: ${{ steps.sbom.outputs.file }}
+          push-to-registry: true
+
+      - name: Attest build provenance (files)
+        # Source-only releases, and dry runs (which prove the attestation permissions without
+        # signing anything about a real image).
+        if: inputs.attest && (inputs.dry-run || inputs.image == '') && steps.record.outcome == 'success'
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ runner.temp }}/evidence/*.json
+
+      - name: Release gate
+        if: always()
+        env:
+          SBOM_OK: ${{ steps.sbom.outcome }}
+          SCAN_OK: ${{ steps.scan.outcome }}
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          GATE: ${{ inputs.gate }}
+          HAS_IMAGE: ${{ inputs.image != '' }}
+          THRESHOLD: ${{ inputs.severity-threshold }}
+          EXCEPTION: ${{ inputs.exception }}
+          SUBJECT_OK: ${{ steps.subject.outcome }}
+          RECORD_OK: ${{ steps.record.outcome }}
+        run: |
+          set -u
+          problems=()
+          [ "$SUBJECT_OK" = success ] || problems+=("the release subject could not be resolved")
+          [ "$RECORD_OK" = success ] || problems+=("the provenance record was not written")
+          [ "$SBOM_OK" = success ] || problems+=("SBOM generation failed")
+          if [ "$HAS_IMAGE" = true ]; then
+            [ "$SCAN_OK" = success ] || problems+=("the final-image scan failed")
+            if [ "$GATE" = true ] && [ "${FINDINGS:-0}" != 0 ]; then
+              problems+=("${FINDINGS} fixable ${THRESHOLD}+ finding(s) in the final image (fix, or accept in .trivyignore with an exp: date)")
+            fi
+          fi
+          [ ${#problems[@]} = 0 ] && { echo "Release evidence complete."; exit 0; }
+          msg=$(printf '%s; ' "${problems[@]}")
+          if [ -n "$EXCEPTION" ]; then
+            echo "::warning::Release not production-eligible on evidence (${msg%; }), released under exception ${EXCEPTION}"
+            exit 0
+          fi
+          echo "::error::Release not production-eligible: ${msg%; }. Re-run with an exception (a Jira key) only if one is approved."
+          exit 1

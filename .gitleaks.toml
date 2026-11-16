@@ -3,5 +3,5 @@
 useDefault = true
 
 [[allowlists]]
-description = "security-scan test fixtures (tests/security-scan/README.md)"
-paths = ['''tests/security-scan/fixtures/''']
+description = "security-scan test fixtures (tests/security-scan/README.md, tests/security-tools/)"
+paths = ['''tests/security-scan/fixtures/''', '''tests/security-tools/''']

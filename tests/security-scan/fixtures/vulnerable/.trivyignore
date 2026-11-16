@@ -1,0 +1,2 @@
+# Expired risk acceptance (test fixture, LG-1216): Trivy must report CVE-2021-44906 again.
+CVE-2021-44906 exp:2020-01-01
