@@ -108,7 +108,14 @@ gh attestation verify oci://ghcr.io/lovablegarden/lovablegarden-tasks:1.1.30 \
   --repo lovablegarden/lovablegarden-tasks --signer-workflow "$sw" --predicate-type https://cyclonedx.org/bom
 ```
 
-Without `--signer-workflow` (or `--signer-repo lovablegarden/.github`), `gh` expects the signer to be a workflow in the service repo itself and rejects the attestation.
+Without `--signer-workflow` (or `--signer-repo lovablegarden/.github`), `gh` expects the signer to be a workflow in the service repo itself and rejects the attestation (`verifying with issuer "GitHub, Inc."`). `--owner lovablegarden` also passes, but it accepts any signer in the org; use `--repo` with `--signer-workflow`.
+
+`--repo` is the repository that builds the image, which isn't always the image name: the JWT validator is built in `lovablegarden-system`:
+
+```bash
+gh attestation verify oci://ghcr.io/lovablegarden/supabase-jwt-validator:1.0.52 \
+  --repo lovablegarden/lovablegarden-system --signer-workflow "$sw"
+```
 
 ## Reconciling deployed images with the lock and the releases
 
@@ -125,4 +132,5 @@ All three must agree. A mismatch means the tag moved after the release (the rete
 
 - GitHub Release assets stay as long as the release. Releases are never deleted.
 - Attestations stay with the image in GHCR and in the attestations API. The GHCR retention policy ([package retention](../../.github/workflows/package-retention-scheduled.yml)) protects versions that a system lock references; an image that is pruned keeps its release assets, so the SBOM survives the image.
+- In GHCR an attestation is its own package version, tagged `sha256-<image digest>` (the OCI referrers tag). [`prune-ghcr-package.yml`](../../.github/workflows/prune-ghcr-package.yml) keeps it as long as its image is kept (a kept release, a protected pin, or an untagged image such as a rollback digest), and deletes it together with its image. Before LG-1471 (17 Nov 2026) the prune treated these tags as branch builds and deleted them: the GHCR copy of the `supabase-jwt-validator` 1.0.51 attestation is gone. `gh attestation verify` reads the attestations API, so verification never depended on the GHCR copy.
 - Run artifacts: 90 days.

@@ -131,12 +131,12 @@ jobs:
           KEEP_COUNT: ${{ inputs.keep_count }}
           DRY_RUN: ${{ inputs.dry_run }}
           PROTECT_TAGS: ${{ steps.protect.outputs.skip-tags }}
+          SOURCE_REPO: ${{ steps.repo.outputs.repository }}
         run: |
           set -euo pipefail
 
           PAGE=1
           ALL='[]'
-          SOURCE_REPO="${{ steps.repo.outputs.repository }}"
           while true; do
             if RESP=$(gh api \
               -H "Accept: application/vnd.github+json" \
@@ -173,6 +173,10 @@ jobs:
           with open(os.environ["VERSIONS_FILE"], encoding="utf-8") as f:
               versions = json.load(f)
           semver_re = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
+          # Attestation/SBOM referrers pushed next to an image (release-provenance.yml,
+          # push-to-registry) are tagged sha256-<subject digest>[.suffix] (OCI referrers tag schema).
+          # They belong to their subject: kept while the subject is kept, deleted with it (LG-1471).
+          referrer_re = re.compile(r"^sha256-([0-9a-f]{64})(\..+)?$")
 
           def tags_for(v):
               tags = v.get("metadata", {}).get("container", {}).get("tags")
@@ -180,9 +184,12 @@ jobs:
                   tags = v.get("name") or []
               return [str(t) for t in tags]
 
+          def own_tags(v):
+              return [t for t in tags_for(v) if not referrer_re.match(t)]
+
           semver_rank = {}
           for v in versions:
-              for tag in tags_for(v):
+              for tag in own_tags(v):
                   if semver_re.match(tag):
                       semver_rank[tag] = max(semver_rank.get(tag, ""), v["created_at"])
 
@@ -192,9 +199,14 @@ jobs:
           print(f"Protected tags: {sorted(protect)}")
 
           to_delete = []
+          referrers = []
           for v in versions:
               vid = v["id"]
-              tags = tags_for(v)
+              all_tags = tags_for(v)
+              tags = own_tags(v)
+              if all_tags and not tags:
+                  referrers.append(v)
+                  continue
               if not tags:
                   print(f"KEEP  untagged ({vid})")
                   continue
@@ -214,6 +226,21 @@ jobs:
                   to_delete.append(vid)
                   continue
               print(f"KEEP  {tags} ({vid})")
+
+          deleted_digests = {v["name"] for v in versions if v["id"] in set(to_delete)}
+          present_digests = {v["name"] for v in versions}
+          for v in referrers:
+              vid = v["id"]
+              tags = tags_for(v)
+              subjects = {"sha256:" + referrer_re.match(t).group(1) for t in tags}
+              if any(s in present_digests and s not in deleted_digests for s in subjects):
+                  print(f"KEEP  {tags} ({vid}) attestation of a kept version")
+              elif subjects & deleted_digests:
+                  print(f"DELETE {tags} ({vid}) attestation of a deleted version")
+                  to_delete.append(vid)
+              else:
+                  print(f"DELETE {tags} ({vid}) attestation of a version that no longer exists")
+                  to_delete.append(vid)
 
           print(f"Versions to delete: {len(to_delete)}")
           if not to_delete:

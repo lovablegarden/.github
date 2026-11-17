@@ -1,17 +1,22 @@
 name: Test package retention
 
-# Runs the prune-maven-package.yml guard against fake gh/curl and fixtures.
+# Runs the prune-maven-package.yml guard and the prune-ghcr-package.yml selection
+# (attestation referrers follow their image, LG-1471) against fakes and fixtures.
 # Nothing real is listed or deleted.
 on:
   pull_request:
     paths:
       - '.github/workflows/prune-maven-package.yml'
+      - '.github/workflows/prune-ghcr-package.yml'
+      - 'tests/prune-ghcr-package/**'
       - '.github/workflows/test-package-retention.yml'
       - 'tests/prune-maven-package/**'
   push:
     branches: [main]
     paths:
       - '.github/workflows/prune-maven-package.yml'
+      - '.github/workflows/prune-ghcr-package.yml'
+      - 'tests/prune-ghcr-package/**'
       - '.github/workflows/test-package-retention.yml'
       - 'tests/prune-maven-package/**'
 
@@ -25,3 +30,5 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Run prune-maven-package tests
         run: tests/prune-maven-package/run-tests.sh
+      - name: Run prune-ghcr-package tests
+        run: tests/prune-ghcr-package/run-tests.sh
