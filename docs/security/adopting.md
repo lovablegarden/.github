@@ -170,11 +170,10 @@ Checked 17 Nov 2026 (LG-1225). ✅ = in place on `main`.
 
 | Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance | Legacy manual release removed (LG-1470) |
 | --- | --- | --- | --- | --- | --- |
-| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, plants | ✅ | ✅ | ✅ | ✅ image | ✅ |
-| tasks, gardenbook | ✅ | ✅ | ✅ | ✅ image | pending |
+| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, plants, tasks, gardenbook | ✅ | ✅ | ✅ | ✅ image | ✅ |
 | security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ |
 | openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a |
-| lovablegarden-system (supabase-jwt-validator image) | ✅ | **no** (triage dry run) | n/a | ✅ image | n/a |
+| lovablegarden-system (supabase-jwt-validator image) | ✅ | ✅ (lovablegarden-system#380) | n/a | ✅ image | n/a |
 | frontend (jessicabackvall/lovablegarden) | ✅ | passed, but org secrets don't reach a personal-account repo (triage dry run) | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a |
 | lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | |
 
