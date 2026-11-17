@@ -150,14 +150,15 @@
       "enabled": false
     },
     {
-      "description": "Release 1 hold (LG-1222, LG-1217, remove after the launch): Spring Boot and the Spring Framework/Security BOMs get patch updates only (fixes within the current minor); minor and major upgrades are LG-1222",
+      "description": "Release 1 hold (LG-1222, LG-1217, remove after the launch): Spring Boot, the Spring Framework/Security BOMs and springdoc (its minors follow Boot lines) get patch updates only (fixes within the current minor); minor and major upgrades are LG-1222",
       "matchPackageNames": [
         "org.springframework.boot",
         "org.springframework.boot:**",
         "io.spring.dependency-management",
         "io.spring.dependency-management:**",
         "org.springframework:spring-framework-bom",
-        "org.springframework.security:spring-security-bom"
+        "org.springframework.security:spring-security-bom",
+        "org.springdoc:**"
       ],
       "matchUpdateTypes": ["minor", "major"],
       "enabled": false
