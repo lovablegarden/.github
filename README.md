@@ -11,247 +11,33 @@ This repository contains centralized, reusable GitHub Actions workflows for vari
 | `default.json` | Shared Renovate preset: Actions pinned by SHA, base images by digest | [renovate](docs/renovate.md), [lifecycle](docs/security/lifecycle.md) |
 | `SECURITY.md` | Org-wide vulnerability reporting policy | |
 
-## 📁 Repository Structure
+## 📁 Workflow inventory
 
-```
-.github/
-├── workflows/
-│   ├── frontend/           # Frontend project workflows
-│   │   ├── frontend-ci-cd.yml
-│   │   └── frontend-release.yml
-│   ├── backend/            # Backend project workflows (future)
-│   │   └── [coming soon]
-│   └── shared/             # Shared utility workflows (future)
-│       └── [coming soon]
-└── README.md
-```
+Reusable workflows are called at `@main` as `lovablegarden/.github/.github/workflows/<file>@main`. Every file here has a caller (checked 17 Nov 2026, LG-1470).
 
-## 🎯 Available Workflows
+| Workflow | Called by | Purpose |
+| --- | --- | --- |
+| `java-21-gradle-ci.yml` | service `ci.yml` | Build, test, main-branch image (`latest`, `main-<sha>` only) |
+| `java-25-gradle-ci.yml` | `ci-java25.yml` (plants, gardenbook, security-common) | Same on JDK 25. **Generated** from java-21 by `tests/java-template-parity/check.sh --write` |
+| `gated-release.yml` | `release-please.yml` (services, security-common) | release-please with the pre-production gate ([docs](docs/release-please-pre-production.md)) |
+| `release-please.yml` | lovablegarden-system | Plain release-please |
+| `release-docker-publish.yml` | service `release-published.yml` | Release image from the **release tag**, immutable version tags, token only as a BuildKit secret (LG-1468/1469/1471) |
+| `release-library-publish.yml` | security-common `release-published.yml` | Maven publish from the release tag |
+| `release-provenance.yml` | every release path (services, jwt-validator, security-common, openapi-spec, frontend) | SBOM, provenance, attestations, final-image gate |
+| `consumer-bump-system-lock.yml` | service `release-published.yml`, jwt-validator | Bump `versions/services.lock.yml` in lovablegarden-system |
+| `consumer-bump-bom-version.yml` | security-common `release-published.yml` | Bump `lovablegardenBomVersion` in services |
+| `prune-ghcr-package.yml`, `prune-maven-package.yml` | `package-retention.yml`, release workflows, `package-retention-scheduled.yml` | Package retention (keeps attested images, LG-1471) |
+| `security-scan.yml` | `security-scan.yml` in every active repo and the frontend | See the security table above |
+| `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image) |
+| `renovate.yml`, `*-scheduled.yml`, `test-*.yml` | this repo | Renovate runner, scheduled jobs, tests of the reusables |
 
-### 🌐 Frontend Workflows
+### Release path (services)
 
-#### **`frontend-ci-cd.yml`**
-Comprehensive CI/CD pipeline for frontend applications (React, Vue, Angular, etc.)
-
-**Features:**
-- ✅ Build and lint validation
-- ✅ Optional testing
-- ✅ Docker image building and publishing
-- ✅ Artifact uploads
-- ✅ Multi-platform Docker builds (AMD64 + ARM64)
-- ✅ Configurable ESLint warning limits
-- ✅ Rich build summaries
-
-**Usage:**
-```yaml
-name: CI/CD
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
-
-jobs:
-  ci-cd:
-    uses: gardentalkz/.github/.github/workflows/frontend/frontend-ci-cd.yml@main
-    with:
-      node-version: '20.x'
-      lint-command: 'npm run lint:ci'
-      build-command: 'npm run build'
-      docker-registry: 'ghcr.io'
-      project-name: 'my-frontend-app'
-      docker-enabled: true
-      run-tests: false
-      max-warnings: 600
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-```
-
-#### **`frontend-release.yml`**
-Automated release management for frontend applications
-
-**Features:**
-- ✅ Version bumping and tagging
-- ✅ Docker image publishing with proper versioning
-- ✅ GitHub release creation with assets
-- ✅ Archive generation (tar.gz, zip)
-- ✅ Next snapshot version preparation
-- ✅ Prerelease support
-
-**Usage:**
-```yaml
-name: Release
-on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version (e.g., 1.0.0)'
-        required: true
-        type: string
-      prerelease:
-        description: 'Mark as pre-release'
-        required: false
-        type: boolean
-        default: false
-
-jobs:
-  release:
-    uses: gardentalkz/.github/.github/workflows/frontend/frontend-release.yml@main
-    with:
-      version: ${{ github.event.inputs.version }}
-      prerelease: ${{ github.event.inputs.prerelease }}
-      docker-registry: 'ghcr.io'
-      project-name: 'my-frontend-app'
-      docker-enabled: true
-      create-archives: true
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-## 🔧 Configuration Options
-
-### Frontend CI/CD Inputs
-
-| Input | Description | Default | Required |
-|-------|-------------|---------|----------|
-| `node-version` | Node.js version to use | `20.x` | ❌ |
-| `lint-command` | Command to run linting | `npm run lint:ci` | ❌ |
-| `build-command` | Command to build the project | `npm run build` | ❌ |
-| `test-command` | Command to run tests | `npm test` | ❌ |
-| `docker-registry` | Docker registry to publish to | `ghcr.io` | ❌ |
-| `project-name` | Name of the project for Docker image | - | ✅ |
-| `docker-enabled` | Whether to build and publish Docker images | `true` | ❌ |
-| `run-tests` | Whether to run tests | `false` | ❌ |
-| `max-warnings` | Maximum ESLint warnings allowed | `600` | ❌ |
-
-### Frontend Release Inputs
-
-| Input | Description | Default | Required |
-|-------|-------------|---------|----------|
-| `version` | Release version (e.g., 1.0.0) | - | ✅ |
-| `prerelease` | Mark as pre-release | `false` | ❌ |
-| `node-version` | Node.js version to use | `20.x` | ❌ |
-| `lint-command` | Command to run linting | `npm run lint:ci` | ❌ |
-| `build-command` | Command to build the project | `npm run build` | ❌ |
-| `docker-registry` | Docker registry to publish to | `ghcr.io` | ❌ |
-| `project-name` | Name of the project for Docker image | - | ✅ |
-| `docker-enabled` | Whether to build and publish Docker images | `true` | ❌ |
-| `create-archives` | Whether to create archive files | `true` | ❌ |
-| `max-warnings` | Maximum ESLint warnings allowed | `600` | ❌ |
+release-please PR (conventional commits; `chore:` does not release, use `fix:` or a `Release-As:` footer) → merge → GitHub Release `<repo>-v<x.y.z>` → `release-published.yml`: `release-docker-publish` → `release-provenance` (gate) → `consumer-bump-system-lock`. A manual `workflow_dispatch` of "Publish on Release" builds the given release tag and refuses to overwrite an existing image tag. The legacy manual `release.yml` / `java-2x-gradle-release.yml` path was retired in LG-1470.
 
 ## 🔐 Required Secrets
 
-### For All Workflows
-- `GITHUB_TOKEN` - GitHub token for authentication ✅ (auto-provided)
-
-### For NPM Private Packages (Optional)
-- `NPM_TOKEN` - NPM token for private package access
-
-## 📦 Docker Image Versioning
-
-Docker images are automatically tagged with:
-- **Version from package.json** (e.g., `1.0.0`, `1.0.0-SNAPSHOT`)
-- **`latest`** for stable releases (non-prerelease)
-- **Git commit SHA** for traceability (e.g., `main-abc1234`)
-
-## 🚀 Getting Started
-
-### 1. For Frontend Projects
-
-1. **Create CI/CD workflow** in your project:
-   ```bash
-   # In your project repository
-   mkdir -p .github/workflows
-   ```
-
-2. **Create `.github/workflows/ci-cd.yml`**:
-   ```yaml
-   name: CI/CD
-   on:
-     push:
-       branches: [ main, develop ]
-     pull_request:
-       branches: [ main, develop ]
-   
-   jobs:
-     ci-cd:
-       uses: gardentalkz/.github/.github/workflows/frontend/frontend-ci-cd.yml@main
-       with:
-         project-name: 'your-project-name'
-       secrets:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-   ```
-
-3. **Create `.github/workflows/release.yml`**:
-   ```yaml
-   name: Release
-   on:
-     workflow_dispatch:
-       inputs:
-         version:
-           description: 'Release version'
-           required: true
-           type: string
-         prerelease:
-           description: 'Mark as pre-release'
-           required: false
-           type: boolean
-           default: false
-   
-   jobs:
-     release:
-       uses: gardentalkz/.github/.github/workflows/frontend/frontend-release.yml@main
-       with:
-         version: ${{ github.event.inputs.version }}
-         prerelease: ${{ github.event.inputs.prerelease }}
-         project-name: 'your-project-name'
-       secrets:
-         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-   ```
-
-4. **Ensure your project has**:
-   - `package.json` with proper version
-   - `npm run build` command
-   - `npm run lint:ci` command
-   - `Dockerfile` (if Docker is enabled)
-
-## 🛠️ Future Enhancements
-
-### 📋 TODO List
-
-- [x] **Security Scanning**: `security-scan.yml` and `release-provenance.yml` (see above)
-- [ ] **Backend Workflows**: Spring Boot, Node.js API, Python, etc.
-- [ ] **OpenAPI Generator**: Centralized model generation workflows
-- [ ] **Mobile Workflows**: React Native, Flutter support
-- [ ] **Infrastructure**: Terraform, Helm chart deployment workflows
-- [ ] **Shared Utilities**: Docker build, security scan, notification workflows
-- [ ] **Multi-language Support**: Java, Python, Go, Rust workflows
-- [ ] **Database Migrations**: Automated database migration workflows
-- [ ] **Performance Testing**: Load testing integration
-- [ ] **Monitoring**: Automated monitoring setup
-
-### 🔮 Planned Backend Support
-
-```
-backend/
-├── spring-boot-ci-cd.yml      # Spring Boot applications
-├── spring-boot-release.yml    # Spring Boot releases with JAR artifacts
-├── nodejs-api-ci-cd.yml       # Node.js API applications
-├── python-api-ci-cd.yml       # Python API applications
-└── openapi-generator.yml      # OpenAPI model generation
-```
-
-### 🔧 Planned Shared Utilities
-
-```
-shared/
-├── docker-build.yml           # Reusable Docker building
-├── security-scan.yml          # Security scanning
-├── notification.yml           # Slack/Teams notifications
-├── sonar-analysis.yml         # SonarQube analysis
-└── performance-test.yml       # Performance testing
-```
+`GH_PACKAGES_TOKEN` (GitHub Packages), `LOVABLEGARDEN_BOT_APP_ID` / `LOVABLEGARDEN_BOT_PRIVATE_KEY` (bot app, see [BOT_SECRETS.md](BOT_SECRETS.md)), and for scan triage `JIRA_USER_EMAIL` / `JIRA_API_TOKEN` with the org variable `JIRA_BASE_URL`.
 
 ## 🤝 Contributing
 
@@ -295,4 +81,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Made with ❤️ by the GardenTalkz Team**
+**LovableGarden platform**
