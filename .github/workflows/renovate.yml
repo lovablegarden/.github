@@ -63,7 +63,7 @@ jobs:
             -e RENOVATE_REPOSITORIES="$(echo "$RENOVATE_REPOSITORIES" | tr -d ' ')" \
             -e RENOVATE_ONBOARDING=false \
             -e RENOVATE_REQUIRE_CONFIG=required \
-            -e RENOVATE_GIT_AUTHOR="lovablegarden-bot <lovablegarden-bot@users.noreply.github.com>" \
+            -e RENOVATE_GIT_AUTHOR="lovablegarden-bot[bot] <296192083+lovablegarden-bot[bot]@users.noreply.github.com>" \
             -e RENOVATE_DRY_RUN="$DRY_RUN" \
             -e LOG_LEVEL="$LOG_LEVEL" \
             ghcr.io/renovatebot/renovate:41
