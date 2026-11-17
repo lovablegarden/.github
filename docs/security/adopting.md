@@ -166,8 +166,18 @@ From a throwaway branch of the repo, a `workflow_dispatch` caller with `dry-run:
 
 ## Rollout status
 
-| Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance |
-| --- | --- | --- | --- | --- |
-| 12 services, system, security-common, openapi-spec, frontend | yes (LG-1218) | Block R | Block R | Block R |
+Checked 17 Nov 2026 (LG-1225). ✅ = in place on `main`.
 
-Block R of the R1 round updates the callers; this table is updated with it.
+| Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance | Legacy manual release removed (LG-1470) |
+| --- | --- | --- | --- | --- | --- |
+| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, plants | ✅ | ✅ | ✅ | ✅ image | ✅ |
+| tasks, gardenbook | ✅ | ✅ | ✅ | ✅ image | pending |
+| security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ |
+| openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a |
+| lovablegarden-system (supabase-jwt-validator image) | ✅ | **no** (triage dry run) | n/a | ✅ image | n/a |
+| frontend (jessicabackvall/lovablegarden) | ✅ | passed, but org secrets don't reach a personal-account repo (triage dry run) | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a |
+| lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | |
+
+Branch protection / rulesets: none yet. Without them, required checks and Renovate's "auto-merge after required checks" are not enforced; an org ruleset is proposed (LG-1225).
+
+Operations, owners, rollback: [operations.md](operations.md).
