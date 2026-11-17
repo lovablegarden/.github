@@ -18,8 +18,8 @@ The shared preset is [`default.json`](../default.json) at the root of this repo.
 | Security fixes | Vulnerability alerts (GitHub and OSV) skip the schedule and the release age, get the `security` label, and never auto-merge. Required checks still run. |
 | GitHub Actions | Pinned to commit SHA with the version in a comment. Grouped into one PR. Non-major updates auto-merge after required checks. |
 | Base images (LG-1224) | Dockerfile and compose images are pinned as `tag@sha256:digest`. Digest refreshes (same tag, patched OS packages) are grouped into one "Base image digests" PR with the `base-image` label. Dockerfile digests auto-merge after required checks, even for runtimes like Temurin; compose digests (they change stage and prod directly) need a review. Policy: [security/lifecycle.md](security/lifecycle.md). |
-| Gradle wrapper | Own PR, never auto-merged. |
-| Spring Boot | Plugin, starters and `io.spring.dependency-management` in one group, never auto-merged. |
+| Gradle wrapper | Own PR, never auto-merged. **Release 1 hold:** disabled until after the 2 Feb 2027 launch; Block 4 moves services to Gradle 9.1 by hand (LG-1380). |
+| Spring Boot | Plugin, starters and `io.spring.dependency-management` in one group, never auto-merged. **Release 1 hold:** Boot, the Spring Framework/Security BOMs and springdoc (its minors follow Boot lines) get **patch** updates only; minor and major are LG-1222, deferred until after R1. Remove both hold rules (end of `default.json`) after the launch. |
 | Other Gradle/Maven, npm | Non-major updates grouped per manager. Patch updates auto-merge; minor updates need a review. |
 | Majors | Separate PR, only after approval on the Dependency Dashboard, never auto-merged. Java and Node runtime majors are not proposed (planned work, LG-1222). |
 | Runtimes and frameworks | Spring Boot, React, TypeScript, Vite, Node, Temurin, PostgreSQL and Flyway never auto-merge, whatever the update type, except Dockerfile base-image digest refreshes (above). |
