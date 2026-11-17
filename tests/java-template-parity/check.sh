@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The java-25-gradle-*.yml templates are generated from their java-21 siblings:
+# The java-25-gradle-ci.yml template is generated from java-21-gradle-ci.yml:
 # same file, a "generated" header, and only the JDK version changed.
 #
 #   tests/java-template-parity/check.sh           # fail if java-25 has drifted
@@ -23,7 +23,7 @@ generate() {
 }
 
 status=0
-for kind in ci release; do
+for kind in ci; do
   target="$WORKFLOWS/java-25-gradle-$kind.yml"
   if $WRITE; then
     generate "$kind" > "$target"
