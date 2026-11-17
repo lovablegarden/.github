@@ -143,6 +143,24 @@
       "matchDepNames": ["java", "node", "eclipse-temurin"],
       "matchUpdateTypes": ["major"],
       "enabled": false
+    },
+    {
+      "description": "Release 1 hold (LG-1217, remove after the 2 Feb 2027 launch): no Gradle wrapper PRs; Block 4 moves the services to Gradle 9.1 by hand (LG-1380)",
+      "matchManagers": ["gradle-wrapper"],
+      "enabled": false
+    },
+    {
+      "description": "Release 1 hold (LG-1222, LG-1217, remove after the launch): Spring Boot and the Spring Framework/Security BOMs get patch updates only (fixes within the current minor); minor and major upgrades are LG-1222",
+      "matchPackageNames": [
+        "org.springframework.boot",
+        "org.springframework.boot:**",
+        "io.spring.dependency-management",
+        "io.spring.dependency-management:**",
+        "org.springframework:spring-framework-bom",
+        "org.springframework.security:spring-security-bom"
+      ],
+      "matchUpdateTypes": ["minor", "major"],
+      "enabled": false
     }
   ]
 }
