@@ -13,7 +13,9 @@ Every deployable release carries a machine-readable SBOM and a provenance record
 
 The org is on GitHub Enterprise Cloud, so attestations on private repos are signed by GitHub's private Sigstore instance and never reach the public transparency log.
 
-BuildKit's own provenance on the image stays at `mode=min`: max mode would record build-arg values, and the release build passes a package token as a build arg.
+BuildKit's own provenance on the image stays at `mode=min`; the signed provenance above is the record. No org workflow passes a token as a build-arg (LG-1468): the packages token reaches BuildKit only as a secret (`RUN --mount=type=secret,id=GH_PACKAGE_TOKEN`), which is never written to image history or provenance.
+
+`release-docker-publish.yml` builds the commit of the release tag, also on a manual `workflow_dispatch` (LG-1469), and refuses to push a version tag that already exists in GHCR (LG-1471). Its `tag` output is the git tag it built; pass that to `release-provenance.yml` so both use the same commit.
 
 ## Source SBOMs (no image: libraries, specs, frontend)
 

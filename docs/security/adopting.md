@@ -128,7 +128,7 @@ jobs:
       attestations: write
     uses: lovablegarden/.github/.github/workflows/release-provenance.yml@main
     with:
-      release-tag: ${{ github.event.release.tag_name || github.event.inputs.version }}
+      release-tag: ${{ needs.publish-docker.outputs.tag }}   # git tag the image was built from (LG-1469)
       image: ${{ needs.publish-docker.outputs.image }}
       digest: ${{ needs.publish-docker.outputs.digest }}
       exception: ${{ github.event.inputs.provenance-exception }}
