@@ -166,16 +166,19 @@ From a throwaway branch of the repo, a `workflow_dispatch` caller with `dry-run:
 
 ## Rollout status
 
-Checked 17 Nov 2026 (LG-1225). ✅ = in place on `main`.
+Checked 18 Nov 2026 (LG-1225). ✅ = in place on `main`.
 
-| Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance | Legacy manual release removed (LG-1470) |
-| --- | --- | --- | --- | --- | --- |
-| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, plants, tasks, gardenbook | ✅ | ✅ | ✅ | ✅ image | ✅ |
-| security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ |
-| openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a |
-| lovablegarden-system (supabase-jwt-validator image) | ✅ | ✅ (lovablegarden-system#380) | n/a | ✅ image | n/a |
-| frontend (jessicabackvall/lovablegarden) | ✅ | passed, but org secrets don't reach a personal-account repo (triage dry run) | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a |
-| lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | |
+| Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance | Legacy manual release removed (LG-1470) | Renovate (LG-1217) |
+| --- | --- | --- | --- | --- | --- | --- |
+| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks | ✅ | ✅ | ✅ | ✅ image | ✅ | ✅ (18 Nov) |
+| plants, gardenbook | ✅ | ✅ | ✅ | ✅ image | ✅ | after their Release 1 blocks |
+| security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ | ✅ pilot |
+| openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a | not yet |
+| lovablegarden-system (supabase-jwt-validator image) | ✅ | ✅ (lovablegarden-system#380) | n/a | ✅ image | n/a | ✅ pilot |
+| frontend (jessicabackvall/lovablegarden) | ✅ | passed, but org secrets don't reach a personal-account repo (triage dry run) | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a | `renovate.json` present; needs the bot app installed on the repo (Jessica) |
+| lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | | |
+
+Jira triage: the service-account token is currently rejected (401, found by the LG-1216 controlled test on 18 Nov), so no repo can file issues until `JIRA_API_TOKEN` is replaced. See [operations.md](operations.md).
 
 Branch protection / rulesets: none yet. Without them, required checks and Renovate's "auto-merge after required checks" are not enforced; an org ruleset is proposed (LG-1225).
 

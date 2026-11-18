@@ -86,8 +86,17 @@ check "closed issue found again: labelled security-recurred once" 'grep -qx upda
 out=$(env "${env_common[@]}" "${jira_env[@]}" GITHUB_OUTPUT="$FIX/o5" bash "$s/cve-triage.sh" 2>"$FIX/err")
 check "and not again on the next run" 'grep -qx updated=0 "$FIX/o5"'
 
+cp "$FIX/calls.log" "$FIX/calls.log.before"
+out=$(env "${env_common[@]}" "${jira_env[@]}" JIRA_API_TOKEN=wrong-token GITHUB_OUTPUT="$FIX/o7" bash "$s/cve-triage.sh" 2>"$FIX/err"); rc=$?
+check "rejected token: preflight fails the run, nothing searched or created" '[ $rc = 1 ] && grep -qx jira_ok=false "$FIX/o7" && grep -qx failed=3 "$FIX/o7" && grep -q "Jira check failed" "$FIX/err" && [ "$(grep -c "search/jql\|/issue" "$FIX/calls.log")" = "$(grep -c "search/jql\|/issue" "$FIX/calls.log.before")" ]'
+: > "$FIX/empty.json"; echo '{"Results":[]}' > "$FIX/empty.json"
+out=$(env "${env_common[@]}" "${jira_env[@]}" TRIVY_JSON="$FIX/empty.json" LIFECYCLE_JSON= JIRA_API_TOKEN=wrong-token GITHUB_OUTPUT="$FIX/o8" bash "$s/cve-triage.sh" 2>"$FIX/err"); rc=$?
+check "rejected token with nothing to file still fails" '[ $rc = 1 ] && grep -qx candidates=0 "$FIX/o8" && grep -qx jira_ok=false "$FIX/o8"'
+out=$(env "${env_common[@]}" "${jira_env[@]}" TRIVY_JSON="$FIX/empty.json" LIFECYCLE_JSON= GITHUB_OUTPUT="$FIX/o9" bash "$s/cve-triage.sh" 2>"$FIX/err"); rc=$?
+check "valid token with nothing to file passes the preflight" '[ $rc = 0 ] && grep -qx jira_ok=true "$FIX/o9"'
+
 touch "$FIX/jira.down"
 out=$(env "${env_common[@]}" "${jira_env[@]}" GITHUB_OUTPUT="$FIX/o6" bash "$s/cve-triage.sh" 2>"$FIX/err"); rc=$?
-check "Jira down: run fails and says so" '[ $rc = 1 ] && grep -qx failed=3 "$FIX/o6"'
+check "Jira down: run fails and says so" '[ $rc = 1 ] && grep -qx failed=3 "$FIX/o6" && grep -qx jira_ok=false "$FIX/o6"'
 
 exit $fail

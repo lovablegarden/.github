@@ -13,6 +13,8 @@ How the baseline is run day to day: who owns what, what runs when, how to switch
 
 Triage creates Jira issues through an Atlassian service account (org secrets `JIRA_USER_EMAIL`, `JIRA_API_TOKEN`, variable `JIRA_BASE_URL`).
 
+Every live triage run first checks that the service account can read the project (`GET /rest/api/3/project/LG`). If that fails, the triage job fails with "Jira check failed", even on a night with nothing to file. The usual cause is an expired or re-issued token. Fix: create a new API token for the service account (scopes `read:jira-work`, `write:jira-work`), set it as the org secret `JIRA_API_TOKEN`, check that `JIRA_USER_EMAIL` is the service account's own `…@serviceaccount.atlassian.com` address, and confirm the account has Browse, Create, Edit and Add comments on LG. Then re-run one repo's Security Scan by dispatch.
+
 ## What runs when
 
 | When | What | Where |
