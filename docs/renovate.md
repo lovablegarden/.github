@@ -35,7 +35,7 @@ Renovate runs here as the scheduled workflow [`renovate.yml`](../.github/workflo
 
 | Setting | Value |
 | --- | --- |
-| Repos | `RENOVATE_REPOSITORIES` in the workflow (and the app token's `repositories` list). Pilot: `lovablegarden-system`, `lovablegarden-security-common`. Services since 18 Nov 2026: audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks. Not yet: plants and gardenbook (after their Release 1 blocks), openapi-spec, and the frontend (needs the bot app on `jessicabackvall/lovablegarden`). |
+| Repos | `RENOVATE_REPOSITORIES` in the workflow (and the app token's `repositories` list). Pilot: `lovablegarden-system`, `lovablegarden-security-common`. Services since 18 Nov 2026: audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks, plants. Not yet: gardenbook (after its Release 1 blocks), openapi-spec, and the frontend (needs the bot app on `jessicabackvall/lovablegarden`). |
 | Opt-in | `requireConfig=required`, onboarding off: a repo without `renovate.json` is skipped, and Renovate never opens onboarding PRs. |
 | Scheduled runs | Hourly on weekdays, only while the Actions variable `RENOVATE_ENABLED` is `true`. The preset's schedule decides when PRs open. |
 | Manual run | **Actions → Renovate → Run workflow**. `dry_run` (default on) only logs what would happen. |
@@ -53,7 +53,7 @@ Renovate runs here as the scheduled workflow [`renovate.yml`](../.github/workflo
 ## Rolling out
 
 1. Pilot: lovablegarden-system and one backend repo, lovablegarden-security-common (Block A, R1 round). Done: pins auto-merged, R1 holds held.
-2. Services (18 Nov 2026): `renovate.json` in each repo plus the repo in `RENOVATE_REPOSITORIES` and the app token's `repositories`. Still to come: plants, gardenbook, openapi-spec and the frontend, the same way.
+2. Services (18 Nov 2026): `renovate.json` in each repo plus the repo in `RENOVATE_REPOSITORIES` and the app token's `repositories`. Still to come: gardenbook, openapi-spec and the frontend, the same way.
 3. Check the first PRs: labels, grouping, and that nothing outside patch/actions auto-merged.
 
 ## Turning it off
