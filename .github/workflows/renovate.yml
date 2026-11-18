@@ -4,8 +4,10 @@
 #
 # - Scheduled runs only happen when the org/repo variable RENOVATE_ENABLED is 'true'.
 # - workflow_dispatch can run any time; dry_run=true (default) only logs what Renovate would do.
-# - Only the repos in RENOVATE_REPOSITORIES are touched (pilot: lovablegarden-system and
-#   lovablegarden-security-common). Repos without a renovate.json are skipped (requireConfig).
+# - Only the repos in RENOVATE_REPOSITORIES are touched: the pilot (lovablegarden-system,
+#   lovablegarden-security-common) plus the services (LG-1217 rollout, 18 Nov 2026). plants and
+#   gardenbook join after their Release 1 blocks. Repos without a renovate.json are skipped
+#   (requireConfig). Keep the app-token `repositories` list below in step.
 name: Renovate
 
 on:
@@ -34,7 +36,17 @@ concurrency:
 env:
   RENOVATE_REPOSITORIES: >-
     lovablegarden/lovablegarden-system,
-    lovablegarden/lovablegarden-security-common
+    lovablegarden/lovablegarden-security-common,
+    lovablegarden/lovablegarden-audit,
+    lovablegarden/lovablegarden-community,
+    lovablegarden/lovablegarden-commercial,
+    lovablegarden/lovablegarden-pantry,
+    lovablegarden/lovablegarden-media,
+    lovablegarden/lovablegarden-wiki,
+    lovablegarden/lovablegarden-users,
+    lovablegarden/lovablegarden-knowledgehub,
+    lovablegarden/lovablegarden-supplies,
+    lovablegarden/lovablegarden-tasks
 
 jobs:
   renovate:
@@ -49,7 +61,7 @@ jobs:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
-          repositories: lovablegarden-system,lovablegarden-security-common,.github
+          repositories: lovablegarden-system,lovablegarden-security-common,.github,lovablegarden-audit,lovablegarden-community,lovablegarden-commercial,lovablegarden-pantry,lovablegarden-media,lovablegarden-wiki,lovablegarden-users,lovablegarden-knowledgehub,lovablegarden-supplies,lovablegarden-tasks
 
       - name: Run Renovate
         env:
