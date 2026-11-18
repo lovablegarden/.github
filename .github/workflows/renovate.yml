@@ -5,8 +5,8 @@
 # - Scheduled runs only happen when the org/repo variable RENOVATE_ENABLED is 'true'.
 # - workflow_dispatch can run any time; dry_run=true (default) only logs what Renovate would do.
 # - Only the repos in RENOVATE_REPOSITORIES are touched: the pilot (lovablegarden-system,
-#   lovablegarden-security-common) plus the services (LG-1217 rollout, 18 Nov 2026). plants and
-#   gardenbook join after their Release 1 blocks. Repos without a renovate.json are skipped
+#   lovablegarden-security-common) plus the services (LG-1217 rollout, 18 Nov 2026). gardenbook
+#   joins after its Release 1 blocks. Repos without a renovate.json are skipped
 #   (requireConfig). Keep the app-token `repositories` list below in step.
 name: Renovate
 
@@ -46,7 +46,8 @@ env:
     lovablegarden/lovablegarden-users,
     lovablegarden/lovablegarden-knowledgehub,
     lovablegarden/lovablegarden-supplies,
-    lovablegarden/lovablegarden-tasks
+    lovablegarden/lovablegarden-tasks,
+    lovablegarden/lovablegarden-plants
 
 jobs:
   renovate:
@@ -61,7 +62,7 @@ jobs:
           app-id: ${{ vars.LOVABLEGARDEN_BOT_APP_ID || secrets.LOVABLEGARDEN_BOT_APP_ID }}
           private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
           owner: lovablegarden
-          repositories: lovablegarden-system,lovablegarden-security-common,.github,lovablegarden-audit,lovablegarden-community,lovablegarden-commercial,lovablegarden-pantry,lovablegarden-media,lovablegarden-wiki,lovablegarden-users,lovablegarden-knowledgehub,lovablegarden-supplies,lovablegarden-tasks
+          repositories: lovablegarden-system,lovablegarden-security-common,.github,lovablegarden-audit,lovablegarden-community,lovablegarden-commercial,lovablegarden-pantry,lovablegarden-media,lovablegarden-wiki,lovablegarden-users,lovablegarden-knowledgehub,lovablegarden-supplies,lovablegarden-tasks,lovablegarden-plants
 
       - name: Run Renovate
         env:

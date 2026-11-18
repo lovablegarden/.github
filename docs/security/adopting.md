@@ -170,8 +170,8 @@ Checked 18 Nov 2026 (LG-1225). ✅ = in place on `main`.
 
 | Repo | Scan | Jira secrets passed | `.trivyignore` dated | Provenance | Legacy manual release removed (LG-1470) | Renovate (LG-1217) |
 | --- | --- | --- | --- | --- | --- | --- |
-| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks | ✅ | ✅ | ✅ | ✅ image | ✅ | ✅ (18 Nov) |
-| plants, gardenbook | ✅ | ✅ | ✅ | ✅ image | ✅ | after their Release 1 blocks |
+| audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks, plants | ✅ | ✅ | ✅ | ✅ image | ✅ | ✅ (18 Nov) |
+| gardenbook | ✅ | ✅ | ✅ | ✅ image | ✅ | after its Release 1 blocks |
 | security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ | ✅ pilot |
 | openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a | not yet |
 | lovablegarden-system (supabase-jwt-validator image) | ✅ | ✅ (lovablegarden-system#380) | n/a | ✅ image | n/a | ✅ pilot |
