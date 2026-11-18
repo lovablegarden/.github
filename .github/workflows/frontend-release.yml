@@ -18,10 +18,10 @@ on:
         type: string
         default: '24.x'
       lint-command:
-        description: 'Command to run linting'
+        description: 'Lint command. The job appends `--max-warnings <max-warnings>`, so it must accept ESLint flags directly (e.g. `npx eslint .`); an `npm run` script needs a trailing ` --`.'
         required: false
         type: string
-        default: 'npm run lint:ci'
+        default: 'npm run lint:ci --'
       build-command:
         description: 'Command to build the project'
         required: false
@@ -50,11 +50,12 @@ on:
         description: 'Maximum number of ESLint warnings allowed'
         required: false
         type: number
+        default: 600
       docker-image-name:
         description: 'Custom Docker image name (defaults to github.repository)'
         required: false
         type: string
-        default: 600
+        default: ''
     secrets:
       GH_PACKAGES_TOKEN:
         description: 'GitHub token for authentication'
@@ -122,7 +123,7 @@ jobs:
       with:
         registry: ${{ inputs.docker-registry }}
         username: ${{ github.actor }}
-        password: ${{ secrets.GHCR_TOKEN || github.token }}
+        password: ${{ secrets.GH_PACKAGES_TOKEN || github.token }}
     
     - name: Extract metadata for Docker
       if: ${{ inputs.docker-enabled }}

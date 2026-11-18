@@ -28,7 +28,7 @@ Reusable workflows are called at `@main` as `lovablegarden/.github/.github/workf
 | `consumer-bump-bom-version.yml` | security-common `release-published.yml` | Bump `lovablegardenBomVersion` in services |
 | `prune-ghcr-package.yml`, `prune-maven-package.yml` | `package-retention.yml`, release workflows, `package-retention-scheduled.yml` | Package retention (keeps attested images, LG-1471) |
 | `security-scan.yml` | `security-scan.yml` in every active repo and the frontend | See the security table above |
-| `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image) |
+| `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image). The job runs `<lint-command> --max-warnings <max-warnings>` (default 600), so `lint-command` must take ESLint flags directly: `npx eslint …`, or an `npm run` script ending in ` --`. |
 | `renovate.yml`, `*-scheduled.yml`, `test-*.yml` | this repo | Renovate runner, scheduled jobs, tests of the reusables |
 
 ### Release path (services)
