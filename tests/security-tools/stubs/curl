@@ -21,6 +21,8 @@ esac
 grep -q 'user = "bot@example.test:test-token"' "$cfg" || { echo "401" >&2; exit 22; }
 [ -f "$FIX/jira.down" ] && exit 22
 case "$method $url" in
+  "GET https://jira.test/rest/api/3/project/LG")
+    echo '{"key":"LG"}' ;;
   "POST https://jira.test/rest/api/3/search/jql")
     label=$(jq -r '.jql' "$data" | sed -E 's/.*labels = "([^"]+)".*/\1/')
     if [ -f "$FIX/state/$label.json" ]; then jq -c '{issues: [.]}' "$FIX/state/$label.json"; else echo '{"issues":[]}'; fi ;;
