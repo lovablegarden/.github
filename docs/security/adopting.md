@@ -175,7 +175,7 @@ Checked 18 Nov 2026 (LG-1225). ✅ = in place on `main`.
 | security-common | ✅ | ✅ | n/a | ✅ source SBOM | ✅ | ✅ pilot |
 | openapi-spec | ✅ | ✅ | n/a | ✅ source SBOM (its manual `release.yml` is the real release) | n/a | not yet |
 | lovablegarden-system (supabase-jwt-validator image) | ✅ | ✅ (lovablegarden-system#380) | n/a | ✅ image | n/a | ✅ pilot |
-| frontend (jessicabackvall/lovablegarden) | ✅ | passed, but org secrets don't reach a personal-account repo (triage dry run) | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a | `renovate.json` present; needs the bot app installed on the repo (Jessica) |
+| frontend (lovablegarden/lovablegarden, moved from jessicabackvall in LG-1495) | ✅ | passed before the move, when org secrets didn't reach the personal-account repo; rerun the triage dry run now that it's in the org | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a | `renovate.json` present; in the Renovate repo list since LG-1495 (bot app needs access to the repo) |
 | lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | | |
 
 Jira triage: the service-account token is currently rejected (401, found by the LG-1216 controlled test on 18 Nov), so no repo can file issues until `JIRA_API_TOKEN` is replaced. See [operations.md](operations.md).

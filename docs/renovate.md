@@ -35,7 +35,7 @@ Renovate runs here as the scheduled workflow [`renovate.yml`](../.github/workflo
 
 | Setting | Value |
 | --- | --- |
-| Repos | `RENOVATE_REPOSITORIES` in the workflow (and the app token's `repositories` list). Pilot: `lovablegarden-system`, `lovablegarden-security-common`. Services since 18 Nov 2026: audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks, plants; gardenbook since 19 Nov. Not yet: openapi-spec, and the frontend (needs the bot app on `jessicabackvall/lovablegarden`). |
+| Repos | `RENOVATE_REPOSITORIES` in the workflow (and the app token's `repositories` list). Pilot: `lovablegarden-system`, `lovablegarden-security-common`. Services since 18 Nov 2026: audit, community, commercial, pantry, media, wiki, users, knowledgehub, supplies, tasks, plants; gardenbook since 19 Nov; the frontend `lovablegarden/lovablegarden` after its move into the org (LG-1495). Not yet: openapi-spec. |
 | Opt-in | `requireConfig=required`, onboarding off: a repo without `renovate.json` is skipped, and Renovate never opens onboarding PRs. |
 | Scheduled runs | Hourly on weekdays, only while the Actions variable `RENOVATE_ENABLED` is `true`. The preset's schedule decides when PRs open. |
 | Manual run | **Actions → Renovate → Run workflow**. `dry_run` (default on) only logs what would happen. |
