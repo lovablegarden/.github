@@ -63,6 +63,14 @@ on:
       NPM_TOKEN:
         description: 'NPM token for private packages'
         required: false
+      LOVABLEGARDEN_BOT_APP_ID:
+        description: >-
+          lovablegarden-bot App ID. With the private key, the version commits are pushed as the bot,
+          which may bypass the main ruleset (LG-1225); GITHUB_TOKEN pushes can't.
+        required: false
+      LOVABLEGARDEN_BOT_PRIVATE_KEY:
+        description: lovablegarden-bot private key (see LOVABLEGARDEN_BOT_APP_ID)
+        required: false
     outputs:
       release-url:
         description: 'URL of the created release'
@@ -77,6 +85,8 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      HAS_BOT_APP: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID != '' && secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY != '' }}
     
     outputs:
       release-url: ${{ steps.create_release.outputs.html_url }}
@@ -84,6 +94,17 @@ jobs:
       next-snapshot: ${{ steps.next_version.outputs.next_snapshot }}
     
     steps:
+    # The bot pushes the version commits: it's a bypass actor on the main ruleset (LG-1225).
+    - name: lovablegarden-bot token
+      id: bot_token
+      if: ${{ env.HAS_BOT_APP == 'true' }}
+      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      with:
+        app-id: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
+        private-key: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
+        owner: ${{ github.repository_owner }}
+        repositories: ${{ github.event.repository.name }}
+
     - name: Checkout code
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     
@@ -111,7 +132,7 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add package.json package-lock.json
-        git commit -m "chore: bump version to ${{ inputs.version }}"
+        git commit -m "chore: bump version to ${{ inputs.version }} [skip ci]"
     
     - name: Set up Docker Buildx
       if: ${{ inputs.docker-enabled }}
@@ -206,12 +227,14 @@ jobs:
         asset_name: ${{ inputs.project-name }}-${{ inputs.version }}.zip
         asset_content_type: application/zip
     
+    # [skip ci] on the commit: a bot push triggers workflows, a GITHUB_TOKEN push never did.
+    # The empty extraheader drops the GITHUB_TOKEN that actions/checkout stored, so the URL's token is used.
     - name: Push version changes
-      uses: ad-m/github-push-action@7fba72704ad2db819788db8f2d9e7d1dfbebe089 # master
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: ${{ github.ref }}
-        tags: true
+      env:
+        PUSH_TOKEN: ${{ steps.bot_token.outputs.token || github.token }}
+      run: |
+        git -c http.https://github.com/.extraheader= push \
+          "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF}"
     
     - name: Calculate next snapshot version
       id: next_version
@@ -231,13 +254,16 @@ jobs:
       run: |
         npm version ${{ steps.next_version.outputs.next_snapshot }} --no-git-tag-version
         git add package.json package-lock.json
-        git commit -m "chore: prepare for next development iteration ${{ steps.next_version.outputs.next_snapshot }}"
+        git commit -m "chore: prepare for next development iteration ${{ steps.next_version.outputs.next_snapshot }} [skip ci]"
     
+    # [skip ci] on the commit: a bot push triggers workflows, a GITHUB_TOKEN push never did.
+    # The empty extraheader drops the GITHUB_TOKEN that actions/checkout stored, so the URL's token is used.
     - name: Push snapshot version
-      uses: ad-m/github-push-action@7fba72704ad2db819788db8f2d9e7d1dfbebe089 # master
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: ${{ github.ref }}
+      env:
+        PUSH_TOKEN: ${{ steps.bot_token.outputs.token || github.token }}
+      run: |
+        git -c http.https://github.com/.extraheader= push \
+          "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF}"
     
     - name: Create Release Summary
       run: |
