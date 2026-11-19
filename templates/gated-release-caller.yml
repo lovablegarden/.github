@@ -7,7 +7,7 @@ on:
   # Every workflow that owns a required check. No branch filter: PR runs drive the auto-merge,
   # main push runs drive the release.
   workflow_run:
-    workflows: [CI]
+    workflows: [CI, Security Scan]
     types: [completed]
   # Retitles bot `chore: bump …` PRs to `fix(deps): bump …`. Runs from main; never checks out PR code.
   pull_request_target:
@@ -26,6 +26,8 @@ jobs:
     with:
       required-checks: |
         ci / Build Application
+        security / Secrets (gitleaks)
+        security / Dependencies and IaC (Trivy)
     secrets:
       LOVABLEGARDEN_BOT_PRIVATE_KEY: ${{ secrets.LOVABLEGARDEN_BOT_PRIVATE_KEY }}
       LOVABLEGARDEN_BOT_APP_ID: ${{ secrets.LOVABLEGARDEN_BOT_APP_ID }}
