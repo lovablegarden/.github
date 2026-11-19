@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      java-version:
+        description: "JDK for the Gradle build: the service's toolchain version ('21', or '25' for services migrated under LG-1222)"
+        required: false
+        type: string
+        default: '21'
     secrets:
       GH_PACKAGES_TOKEN:
         description: 'GitHub Packages token'
@@ -92,10 +97,10 @@ jobs:
         run: |
           echo "Building $(git rev-parse HEAD) (tag $TAG; workflow ref $GITHUB_REF @ $GITHUB_SHA)" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Set up JDK 21
+      - name: Set up JDK ${{ inputs.java-version }}
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
-          java-version: '21'
+          java-version: ${{ inputs.java-version }}
           distribution: 'temurin'
           cache: gradle
 
