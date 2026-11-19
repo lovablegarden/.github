@@ -19,7 +19,7 @@ Install the App on:
 
 - `lovablegarden-system`
 - `lovablegarden-plants`
-- `lovablegarden-gardendesk`
+- `lovablegarden-gardenbook` (formerly `lovablegarden-gardendesk`)
 - `lovablegarden-security-common`
 - `lovablegarden-tasks`
 - `lovablegarden-audit`

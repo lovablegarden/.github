@@ -22,9 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        # lovablegarden-gardendesk was the old name of lovablegarden-gardenbook (the URL redirects); it was
+        # removed in LG-1222 so a BOM release only auto-bumps plants. Other services bump the BOM by hand.
         repo:
           - lovablegarden-plants
-          - lovablegarden-gardendesk
     steps:
       - name: Create GitHub App token
         id: app-token
