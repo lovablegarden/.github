@@ -21,7 +21,7 @@ Reusable workflows are called at `@main` as `lovablegarden/.github/.github/workf
 | `java-25-gradle-ci.yml` | `ci-java25.yml` (plants, gardenbook, security-common) | Same on JDK 25. **Generated** from java-21 by `tests/java-template-parity/check.sh --write` |
 | `gated-release.yml` | `release-please.yml` (services, security-common) | release-please with the pre-production gate ([docs](docs/release-please-pre-production.md)) |
 | `release-please.yml` | lovablegarden-system | Plain release-please |
-| `release-docker-publish.yml` | service `release-published.yml` | Release image from the **release tag**, immutable version tags, token only as a BuildKit secret (LG-1468/1469/1471) |
+| `release-docker-publish.yml` | service `release-published.yml` | Release image from the **release tag**, immutable version tags, token only as a BuildKit secret (LG-1468/1469/1471). `java-version` input (default `'21'`; `'25'` for Java 25 services, LG-1222); `release-provenance.yml` has the same input |
 | `release-library-publish.yml` | security-common `release-published.yml` | Maven publish from the release tag |
 | `release-provenance.yml` | every release path (services, jwt-validator, security-common, openapi-spec, frontend) | SBOM, provenance, attestations, final-image gate |
 | `consumer-bump-system-lock.yml` | service `release-published.yml`, jwt-validator | Bump `versions/services.lock.yml` in lovablegarden-system |
