@@ -47,7 +47,7 @@ env:
     lovablegarden/lovablegarden-knowledgehub,
     lovablegarden/lovablegarden-supplies,
     lovablegarden/lovablegarden-tasks,
-    lovablegarden/lovablegarden-plants
+    lovablegarden/lovablegarden-plants,
     lovablegarden/lovablegarden-gardenbook
 
 jobs:
