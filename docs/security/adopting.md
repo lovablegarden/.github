@@ -77,7 +77,7 @@ Outputs: `secrets`, `dependencies`, `dependencies-new`, `image`, `accepted-risks
 | Lifecycle, risk acceptances | never: report only, with warnings |
 | Triage | a KEV finding (with `fail-on-kev`), or a Jira call failed |
 
-Make **Secrets** and **Dependencies and IaC** required checks in branch protection to make the PR gate binding.
+**Secrets** and **Dependencies and IaC** are required checks on `main` through the org ruleset. The org ruleset is in `evaluate` mode, pending Jessica's decision (LG-1225): GitHub logs what it would block but doesn't block it yet, so the PR gate becomes binding only once it's `active`. The rulesets, their bypass actors and how bot merges work with them are in [operations.md](operations.md#required-checks-on-main-rulesets).
 
 ### Accepting a finding
 
@@ -178,8 +178,8 @@ Checked 18 Nov 2026 (LG-1225). ✅ = in place on `main`.
 | frontend (lovablegarden/lovablegarden, moved from jessicabackvall in LG-1495) | ✅ | passed before the move, when org secrets didn't reach the personal-account repo; rerun the triage dry run now that it's in the org | n/a | ✅ source SBOM in `release.yml`, not yet exercised | n/a | `renovate.json` present; in the Renovate repo list since LG-1495 (bot app needs access to the repo) |
 | lovablegarden-gradle-plugin | archived 13 Nov 2026, excluded | | | | | |
 
-Jira triage: the service-account token is currently rejected (401, found by the LG-1216 controlled test on 18 Nov), so no repo can file issues until `JIRA_API_TOKEN` is replaced. See [operations.md](operations.md).
+Jira triage: the service-account token was rejected on 18 Nov and replaced the same evening. The LG-1216 controlled test then created exactly one issue (LG-1493), and a rerun left it unchanged. See [operations.md](operations.md).
 
-Branch protection / rulesets: none yet. Without them, required checks and Renovate's "auto-merge after required checks" are not enforced; an org ruleset is proposed (LG-1225).
+Rulesets on `main` (checked 20 Nov 2026): the frontend and `.github` repo rulesets are **active**. The org ruleset 27457270 (services, security-common, system) and the openapi-spec repo ruleset are in **evaluate**, pending Jessica's decision (LG-1225). The org ruleset was active on 19 Nov and moved back to evaluate the same day. See [operations.md](operations.md#required-checks-on-main-rulesets).
 
 Operations, owners, rollback: [operations.md](operations.md).
