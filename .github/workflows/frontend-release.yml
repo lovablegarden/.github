@@ -13,10 +13,10 @@ on:
         type: boolean
         default: false
       node-version:
-        description: 'Node.js version to use'
+        description: 'Node.js version to use. Empty (default): the caller''s `.nvmrc`, so the release builds on the same pinned version as CI and local (LG-1223); `24.x` if there is no `.nvmrc`.'
         required: false
         type: string
-        default: '24.x'
+        default: ''
       lint-command:
         description: 'Lint command. The job appends `--max-warnings <max-warnings>`, so it must accept ESLint flags directly (e.g. `npx eslint .`); an `npm run` script needs a trailing ` --`.'
         required: false
@@ -108,10 +108,25 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
     
-    - name: Use Node.js ${{ inputs.node-version }}
+    - name: Resolve the Node.js version
+      id: node
+      env:
+        NODE_VERSION_INPUT: ${{ inputs.node-version }}
+      run: |
+        if [ -n "$NODE_VERSION_INPUT" ]; then
+          version="$NODE_VERSION_INPUT"; source="input"
+        elif [ -f .nvmrc ]; then
+          version="$(tr -d '[:space:]' < .nvmrc)"; source=".nvmrc"
+        else
+          version="24.x"; source="fallback"
+        fi
+        echo "Node.js $version (from $source)"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Use Node.js ${{ steps.node.outputs.version }}
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
       with:
-        node-version: ${{ inputs.node-version }}
+        node-version: ${{ steps.node.outputs.version }}
         cache: 'npm'
         registry-url: 'https://registry.npmjs.org'
       env:
