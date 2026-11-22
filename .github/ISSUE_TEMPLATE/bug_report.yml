@@ -1,0 +1,93 @@
+# Default bug form for every LovableGarden repository without its own (LG-1221).
+# Jira is the bug record: a maintainer accepts the report (label bug:accepted) and bug intake
+# creates or links exactly one Jira Bug. See docs/bugs.md.
+name: Bug report
+description: Something in LovableGarden doesn't work as expected.
+title: "[Bug]: "
+labels: ["bug", "bug:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. You don't need to know how LovableGarden is built: describe what you did and what you saw.
+
+        **Before you submit:**
+        - **Security problem?** Don't report it here. Use [private vulnerability reporting](https://github.com/lovablegarden/.github/security/advisories/new) instead ([policy](https://github.com/lovablegarden/.github/blob/main/SECURITY.md)).
+        - **No secrets or personal data.** Leave out passwords, tokens, API keys, email addresses, names of other people, garden addresses and any data that isn't yours. Crop or blur screenshots. This issue may be visible to others.
+        - **Search first:** check the [open issues](../issues?q=is%3Aissue+label%3Abug) in case it's already reported. If it is, add a 👍 or a comment there instead.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This isn't a security vulnerability (those go to private vulnerability reporting).
+          required: true
+        - label: I removed secrets, tokens and personal data from everything below.
+          required: true
+        - label: I searched the existing issues and didn't find this one.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, in your own words.
+      placeholder: When I mark a sowing task as done, it comes back the next day.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact steps, starting from a page or screen we can open.
+      placeholder: |
+        1. Open Today
+        2. Mark "Sow tomatoes" as done
+        3. Reload the page the next day
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: How much does it affect you?
+      description: Your view of the impact. Maintainers set the actual priority in Jira.
+      options:
+        - I can't use LovableGarden or I lose data
+        - A main feature doesn't work and there's no workaround
+        - Something is wrong but there is a workaround
+        - Cosmetic or minor (text, layout)
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where did you see it?
+      options:
+        - lovablegarden.com (production)
+        - Test environment (test.lovablegarden.com)
+        - Local development
+        - Don't know
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: When did it happen?
+      description: Date and approximate time, with your time zone. It helps us find the right logs.
+      placeholder: 2026-11-22 around 14:30 CET
+  - type: input
+    id: version
+    attributes:
+      label: Version, browser and device
+      description: The version shown in the app footer or settings if you can see one, plus your browser and device.
+      placeholder: "v1.0.118, Firefox 140, Windows 11"
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots, error messages or request IDs
+      description: Paste error text, or attach screenshots. An `X-Request-Id` from an error response helps a lot. Check again that nothing personal is visible.

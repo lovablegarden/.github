@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Fake Jira for tests/bug-intake/run-tests.sh. Issues live in $FIX/jira/<KEY>.json.
+method=GET url='' data='' cfg=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    -X) method=$2; shift 2 ;;
+    -K) cfg=$2; shift 2 ;;
+    -H|--max-time) shift 2 ;;
+    --data) data=${2#@}; shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+echo "$method ${url#https://jira.test}" >> "$FIX/jira-calls.log"
+case " $* $url" in *test-token*) echo "token on the command line" >&2; exit 99 ;; esac
+grep -q 'user = "bot@example.test:test-token"' "$cfg" || { echo 401 >&2; exit 22; }
+path=${url#https://jira.test}
+case "$method $path" in
+  "POST /rest/api/3/search/jql")
+    label=$(jq -r '.jql' "$data" | sed -E 's/.*labels = "([^"]+)".*/\1/')
+    f=$(grep -l "\"$label\"" "$FIX"/jira/*.json 2>/dev/null | sort | head -1)
+    if [ -n "$f" ]; then jq -c '{issues: [{key: .key}]}' "$f"; else echo '{"issues":[]}'; fi ;;
+  "POST /rest/api/2/issue")
+    n=$(( $(ls "$FIX/jira" | grep -c .) + 200 ))
+    jq -c --arg k "LG-$n" '{key: $k, fields: (.fields + {status: {statusCategory: {key: "new"}}})}' "$data" > "$FIX/jira/LG-$n.json"
+    echo "{\"key\":\"LG-$n\"}" ;;
+  "PUT /rest/api/2/issue/"*)
+    f="$FIX/jira/${path##*/}.json"; [ -f "$f" ] || exit 22
+    jq -c --slurpfile u "$data" '.fields.labels += [$u[0].update.labels[].add]' "$f" > "$f.t" && mv "$f.t" "$f" ;;
+  "POST /rest/api/2/issue/"*/comment)
+    k=${path#/rest/api/2/issue/}; k=${k%/comment}; cp "$data" "$FIX/jira-comment-$k.json"; echo '{}' ;;
+  "GET /rest/api/2/issue/"*)
+    k=${path#/rest/api/2/issue/}; k=${k%%\?*}; f="$FIX/jira/$k.json"; [ -f "$f" ] || exit 22; cat "$f" ;;
+  *) echo "unexpected $method $path" >&2; exit 22 ;;
+esac

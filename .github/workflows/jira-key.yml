@@ -1,0 +1,49 @@
+name: Jira key
+
+# Reusable PR check (LG-1221): implementation PRs name their Jira issue in the title, branch or body,
+# so PRs and releases link back to Jira. Bot PRs (release-please, bumps, Renovate) are exempt.
+# Not a required check on the rulesets; adopt it per repo:
+#   on: { pull_request: { types: [opened, edited, synchronize, reopened] } }
+#   jobs:
+#     jira-key:
+#       uses: lovablegarden/.github/.github/workflows/jira-key.yml@main
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Jira project key'
+        type: string
+        default: 'LG'
+
+permissions:
+  contents: read
+
+jobs:
+  jira-key:
+    name: Jira key in PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check title, branch and body
+        env:
+          PROJECT: ${{ inputs.project }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BODY: ${{ github.event.pull_request.body }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          case "$AUTHOR" in
+            *'[bot]'|renovate*|dependabot*) echo "Bot PR by $AUTHOR: exempt."; exit 0 ;;
+          esac
+          case "$BRANCH" in
+            release-please--*|bump/*|renovate/*) echo "Automation branch $BRANCH: exempt."; exit 0 ;;
+          esac
+          re="(^|[^A-Za-z0-9])${PROJECT}-[0-9]+"
+          if grep -qiE "$re" <<<"$TITLE" || grep -qiE "$re" <<<"$BRANCH"; then
+            echo "Jira key found in the title or branch."; exit 0
+          fi
+          if grep -qE "$re" <<<"$BODY"; then
+            echo "::warning::Jira key only in the body. Put it in the title too, so it lands in the squash commit and the changelog."; exit 0
+          fi
+          echo "::error::No ${PROJECT}-<number> in the PR title, branch or body. Add the Jira issue (docs/bugs.md, LG-1221)."
+          exit 1

@@ -1,0 +1,109 @@
+name: Bug intake
+
+# Reusable Jira-first bug intake (LG-1221, docs/bugs.md). Jira is the bug record; GitHub is intake only.
+#  - `issues: labeled` with bug:accepted → create or reuse exactly one Jira Bug (label gh-<repo>-<n>),
+#    label the issue jira:<KEY> and comment once.
+#  - workflow_dispatch with jira-key → link the issue to that existing Jira issue instead (duplicate).
+#  - schedule → close accepted GitHub issues whose Jira issue is Done. No comment sync either way.
+# Without the Jira secrets and the JIRA_BASE_URL variable it's a dry run (job summary only).
+#
+# Caller (one per repo that takes GitHub issues):
+#   on:
+#     issues: { types: [labeled] }
+#     schedule: [{ cron: '17 6 * * *' }]
+#     workflow_dispatch:
+#       inputs:
+#         issue: { description: 'GitHub issue number', required: true }
+#         jira-key: { description: 'Existing Jira issue to link (empty = create or reuse)', required: false }
+#   jobs:
+#     bugs:
+#       if: github.event_name != 'issues' || github.event.label.name == 'bug:accepted'
+#       uses: lovablegarden/.github/.github/workflows/bug-intake.yml@main
+#       permissions: { contents: read, issues: write }
+#       with:
+#         issue: ${{ github.event.issue.number || inputs.issue || '' }}
+#         jira-key: ${{ inputs.jira-key || '' }}
+#       secrets: inherit
+on:
+  workflow_call:
+    inputs:
+      issue:
+        description: 'Issue number to link. Empty = sync (close issues whose Jira bug is Done).'
+        type: string
+        default: ''
+      jira-key:
+        description: 'Existing Jira issue to link instead of creating one'
+        type: string
+        default: ''
+      tooling-ref:
+        description: 'Ref of lovablegarden/.github whose scripts/bugs/ this run uses'
+        type: string
+        default: 'main'
+    secrets:
+      JIRA_USER_EMAIL:
+        required: false
+      JIRA_API_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: bug-intake-${{ github.repository }}-${{ inputs.issue || 'sync' }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout org bug scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lovablegarden/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: .lg-tooling
+          sparse-checkout: scripts/bugs
+          persist-credentials: false
+
+      - name: Read the issue
+        if: inputs.issue != ''
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ inputs.issue }}
+        run: |
+          [[ "$ISSUE" =~ ^[0-9]+$ ]] || { echo "::error::issue must be a number"; exit 2; }
+          gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json title,url,body,labels,state > "$RUNNER_TEMP/issue.json"
+          jq -r '.body // ""' "$RUNNER_TEMP/issue.json" > "$RUNNER_TEMP/issue-body.txt"
+          if ! jq -e '[.labels[].name] | index("bug:accepted")' "$RUNNER_TEMP/issue.json" >/dev/null; then
+            echo "::error::#$ISSUE has no bug:accepted label. Accept it in triage first (docs/bugs.md)."; exit 1
+          fi
+
+      - name: Link to Jira
+        if: inputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue }}
+          JIRA_KEY: ${{ inputs.jira-key }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ vars.JIRA_PROJECT_KEY || 'LG' }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          export ISSUE_TITLE ISSUE_URL ISSUE_BODY_FILE="$RUNNER_TEMP/issue-body.txt"
+          ISSUE_TITLE=$(jq -r .title "$RUNNER_TEMP/issue.json")
+          ISSUE_URL=$(jq -r .url "$RUNNER_TEMP/issue.json")
+          bash .lg-tooling/scripts/bugs/jira-bug-intake.sh link
+
+      - name: Close issues whose Jira bug is Done
+        if: inputs.issue == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          JIRA_PROJECT: ${{ vars.JIRA_PROJECT_KEY || 'LG' }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: bash .lg-tooling/scripts/bugs/jira-bug-intake.sh sync
