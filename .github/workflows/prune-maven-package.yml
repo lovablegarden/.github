@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept)'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept; a BOM package keeps every release)'
         required: false
         type: number
         default: 3
@@ -47,7 +47,7 @@ on:
         required: true
         type: string
       keep_count:
-        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept)'
+        description: 'Number of release versions to keep (-SNAPSHOT versions do not count; versions a BOM or a service build file pins are always kept; a BOM package keeps every release)'
         required: false
         type: number
         default: 3
@@ -94,7 +94,10 @@ jobs:
           shopt -s inherit_errexit
 
           BOM_PACKAGE='com.lovablegarden.lovablegarden-bom'
-          BOM_POM_BASE='https://maven.pkg.github.com/lovablegarden/lovablegarden-security-common/com/lovablegarden/lovablegarden-bom'
+          # Every BOM line (Boot 3 and Boot 4). Their released versions are never deleted:
+          # services pin them, and a pruned BOM breaks every build that still uses it (LG-1550).
+          BOM_PACKAGES='com.lovablegarden.lovablegarden-bom com.lovablegarden.lovablegarden-bom-boot4'
+          BOM_POM_REPO='https://maven.pkg.github.com/lovablegarden/lovablegarden-security-common'
           SEMVER_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
           WORK=$(mktemp -d)
 
@@ -136,9 +139,17 @@ jobs:
           # Only releases fill the keep window. -SNAPSHOT versions are mutable
           # and must not push releases out of it; they survive only if protected.
           # Returns the ids to keep for a given JSON array of protected names.
+          # A BOM package keeps every release; only its snapshots can go (LG-1550).
+          KEEP_ALL_RELEASES=false
+          for B in $BOM_PACKAGES; do
+            [ "$PACKAGE_NAME" = "$B" ] && KEEP_ALL_RELEASES=true
+          done
+          if [ "$KEEP_ALL_RELEASES" = true ]; then
+            echo "${PACKAGE_NAME} is a BOM: every release is kept, only -SNAPSHOT versions can be pruned"
+          fi
           keep_ids() {
-            echo "$SORTED" | jq -c --argjson n "$KEEP_COUNT" --argjson protect "$1" '
-              ( [ .[] | select(.name | endswith("-SNAPSHOT") | not) ][0:$n] | map(.id) ) as $recent
+            echo "$SORTED" | jq -c --argjson n "$KEEP_COUNT" --argjson all "$KEEP_ALL_RELEASES" --argjson protect "$1" '
+              ( [ .[] | select(.name | endswith("-SNAPSHOT") | not) ] | (if $all then . else .[0:$n] end) | map(.id) ) as $recent
               | [ .[] | select(.name as $nm | $protect | index($nm)) | .id ] as $pinned
               | ($recent + $pinned) | unique
             '
@@ -166,29 +177,34 @@ jobs:
           : > "$WORK/protect.txt"
           echo "$INPUT_PROTECT" | jq -r '.[] | "\(.)\tprotect_versions input"' >> "$WORK/protect.txt"
 
-          # 1) BOM POMs. Every existing BOM release is checked, not only the ones the
-          #    BOM prune will keep: the prunes run in parallel, and a superset is safe.
-          BOM_ALL=$(list_versions "$BOM_PACKAGE")
-          BOM_VERSIONS=$(echo "$BOM_ALL" | jq -r --arg re "$SEMVER_RE" '.[] | .name | select(test($re))' | sort -u)
-          [ -n "$BOM_VERSIONS" ] || fail "No ${BOM_PACKAGE} versions found; cannot verify references"
+          # 1) BOM POMs, of both BOM lines (LG-1550: the Boot 4 BOM pins the -boot4 library).
+          #    Every existing BOM release is checked, not only the ones the BOM prune
+          #    will keep: the prunes run in parallel, and a superset is safe.
+          for BP in $BOM_PACKAGES; do
+            BA=${BP#com.lovablegarden.}
+            LABEL=BOM
+            [ "$BA" = lovablegarden-bom ] || LABEL=$BA
+            BOM_ALL=$(list_versions "$BP")
+            BOM_VERSIONS=$(echo "$BOM_ALL" | jq -r --arg re "$SEMVER_RE" '.[] | .name | select(test($re))' | sort -u)
+            [ -n "$BOM_VERSIONS" ] || fail "No ${BP} versions found; cannot verify references"
 
-          for BV in $BOM_VERSIONS; do
-            POM="$WORK/bom-${BV}.pom"
-            CODE=$(curl -sS -L -o "$POM" -w '%{http_code}' -u "x-access-token:${PACKAGES_TOKEN}" \
-              "${BOM_POM_BASE}/${BV}/lovablegarden-bom-${BV}.pom") \
-              || fail "Could not download BOM ${BV} POM"
-            if [ "$CODE" = "404" ]; then
-              # Tolerate only a BOM version deleted meanwhile by the parallel BOM prune
-              if list_versions "$BOM_PACKAGE" | jq -e --arg v "$BV" 'any(.[]; .name == $v)' > /dev/null; then
-                fail "BOM ${BV} is listed but its POM returned 404"
+            for BV in $BOM_VERSIONS; do
+              POM="$WORK/${BA}-${BV}.pom"
+              CODE=$(curl -sS -L -o "$POM" -w '%{http_code}' -u "x-access-token:${PACKAGES_TOKEN}" \
+                "${BOM_POM_REPO}/com/lovablegarden/${BA}/${BV}/${BA}-${BV}.pom") \
+                || fail "Could not download ${LABEL} ${BV} POM"
+              if [ "$CODE" = "404" ]; then
+                # Tolerate only a BOM version deleted meanwhile by the parallel BOM prune
+                if list_versions "$BP" | jq -e --arg v "$BV" 'any(.[]; .name == $v)' > /dev/null; then
+                  fail "${LABEL} ${BV} is listed but its POM returned 404"
+                fi
+                echo "${LABEL} ${BV}: deleted since listing, skipped"
+                continue
               fi
-              echo "BOM ${BV}: deleted since listing, skipped"
-              continue
-            fi
-            [ "$CODE" = "200" ] || fail "BOM ${BV} POM returned HTTP ${CODE}"
+              [ "$CODE" = "200" ] || fail "${LABEL} ${BV} POM returned HTTP ${CODE}"
 
-            # Prints "<groupId>.<artifactId> <version>" per managed dependency
-            REFS=$(python3 - "$POM" <<'PY'
+              # Prints "<groupId>.<artifactId> <version>" per managed dependency
+              REFS=$(python3 - "$POM" <<'PY'
           import re, sys
           import xml.etree.ElementTree as ET
 
@@ -221,10 +237,11 @@ jobs:
               version = re.sub(r"-\d{8}\.\d{6}-\d+$", "-SNAPSHOT", resolve(version))
               print(f"{resolve(group)}.{resolve(artifact)} {version}")
           PY
-            ) || fail "Could not parse BOM ${BV} POM"
+              ) || fail "Could not parse ${LABEL} ${BV} POM"
 
-            echo "$REFS" | awk -v pkg="$PACKAGE_NAME" -v bv="$BV" \
-              '$1 == pkg { print $2 "\tpinned by BOM " bv }' >> "$WORK/protect.txt"
+              echo "$REFS" | awk -v pkg="$PACKAGE_NAME" -v bv="$LABEL $BV" \
+                '$1 == pkg { print $2 "\tpinned by " bv }' >> "$WORK/protect.txt"
+            done
           done
 
           # 2) Consumers of the BOM: lovablegarden-* repos whose default-branch

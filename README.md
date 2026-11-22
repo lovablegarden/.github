@@ -27,7 +27,7 @@ Reusable workflows are called at `@main` as `lovablegarden/.github/.github/workf
 | `release-provenance.yml` | every release path (services, jwt-validator, security-common, openapi-spec, frontend) | SBOM, provenance, attestations, final-image gate |
 | `consumer-bump-system-lock.yml` | service `release-published.yml`, jwt-validator | Bump `versions/services.lock.yml` in lovablegarden-system |
 | `consumer-bump-bom-version.yml` | security-common `release-published.yml` | Bump `lovablegardenBomVersion` in services |
-| `prune-ghcr-package.yml`, `prune-maven-package.yml` | `package-retention.yml`, release workflows, `package-retention-scheduled.yml` | Package retention (keeps attested images, LG-1471) |
+| `prune-ghcr-package.yml`, `prune-maven-package.yml` | `package-retention.yml`, release workflows, `package-retention-scheduled.yml` | Package retention (keeps attested images, LG-1471; never deletes a BOM release, LG-1550) |
 | `security-scan.yml` | `security-scan.yml` in every active repo and the frontend | See the security table above |
 | `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image). Node from the caller's `.nvmrc` unless `node-version` is passed (LG-1223). The job runs `<lint-command> --max-warnings <max-warnings>` (default 600), so `lint-command` must take ESLint flags directly: `npx eslint …`, or an `npm run` script ending in ` --`. |
 | `bug-intake.yml` | `bugs.yml` in this repo; repos that take GitHub issues | Accepted GitHub bug → exactly one Jira Bug; closes the issue when the Jira Bug is Done (LG-1221, [docs](docs/bugs.md)) |

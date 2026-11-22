@@ -12,8 +12,12 @@ while [ $# -gt 0 ]; do
 done
 echo "curl $url" >> "$FIX/calls.log"
 v=$(basename "$(dirname "$url")")
+# lovablegarden-bom POMs are in $FIX/poms, other BOM lines (bom-boot4) in $FIX/poms/<artifact>
+artifact=$(basename "$(dirname "$(dirname "$url")")")
+dir="$FIX/poms"
+[ "$artifact" = lovablegarden-bom ] || dir="$FIX/poms/$artifact"
 # The Maven registry rejects the app token, as the real one does
 [ "$auth" = "x-access-token:$FAKE_PACKAGES_TOKEN" ] || { : > "$out"; printf 401; exit 0; }
-[ -f "$FIX/poms/$v.unreachable" ] && { echo "curl: (7) Failed to connect" >&2; exit 7; }
-[ -f "$FIX/poms/$v.500" ] && { : > "$out"; printf 500; exit 0; }
-if [ -f "$FIX/poms/$v.pom" ]; then cp "$FIX/poms/$v.pom" "$out"; printf 200; else printf 404; fi
+[ -f "$dir/$v.unreachable" ] && { echo "curl: (7) Failed to connect" >&2; exit 7; }
+[ -f "$dir/$v.500" ] && { : > "$out"; printf 500; exit 0; }
+if [ -f "$dir/$v.pom" ]; then cp "$dir/$v.pom" "$out"; printf 200; else printf 404; fi
