@@ -77,7 +77,7 @@ Outputs: `secrets`, `dependencies`, `dependencies-new`, `image`, `accepted-risks
 | Lifecycle, risk acceptances | never: report only, with warnings |
 | Triage | a KEV finding (with `fail-on-kev`), or a Jira call failed |
 
-**Secrets** and **Dependencies and IaC** are required checks on `main` through the org ruleset. The org ruleset is in `evaluate` mode, pending Jessica's decision (LG-1225): GitHub logs what it would block but doesn't block it yet, so the PR gate becomes binding only once it's `active`. The rulesets, their bypass actors and how bot merges work with them are in [operations.md](operations.md#required-checks-on-main-rulesets).
+**Secrets** and **Dependencies and IaC** are required checks on `main` through the org ruleset. The org ruleset is **active** since 22 Nov 2026 (LG-1225), so a PR into `main` can't merge until both are green. The rulesets, their bypass actors and how bot merges work with them are in [operations.md](operations.md#required-checks-on-main-rulesets).
 
 ### Accepting a finding
 
@@ -180,6 +180,6 @@ Checked 18 Nov 2026 (LG-1225). ✅ = in place on `main`.
 
 Jira triage: the service-account token was rejected on 18 Nov and replaced the same evening. The LG-1216 controlled test then created exactly one issue (LG-1493), and a rerun left it unchanged. See [operations.md](operations.md).
 
-Rulesets on `main` (checked 20 Nov 2026): the frontend and `.github` repo rulesets are **active**. The org ruleset 27457270 (services, security-common, system) and the openapi-spec repo ruleset are in **evaluate**, pending Jessica's decision (LG-1225). The org ruleset was active on 19 Nov and moved back to evaluate the same day. See [operations.md](operations.md#required-checks-on-main-rulesets).
+Rulesets on `main`: all four are **active** (LG-1225). The frontend and `.github` repo rulesets since 19 Nov 2026; the org ruleset 27457270 (services, security-common, system) and the openapi-spec repo ruleset since 22 Nov 2026, on Jessica's decision. See [operations.md](operations.md#required-checks-on-main-rulesets).
 
 Operations, owners, rollback: [operations.md](operations.md).

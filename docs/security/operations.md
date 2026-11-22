@@ -17,19 +17,19 @@ Every live triage run first checks that the service account can read the project
 
 ## Required checks on `main` (rulesets)
 
-Every active repo's `main` has a ruleset (LG-1225). Each one blocks deletion and force-push, requires a PR (0 approvals), and requires the checks below from GitHub Actions. A ruleset in `evaluate` only logs what it would block (Insights, below). Switching the org and openapi-spec rulesets to `active` is pending Jessica's decision.
+Every active repo's `main` has a ruleset (LG-1225). Each one blocks deletion and force-push, requires a PR (0 approvals), and requires the checks below from GitHub Actions. All four are `active` (the org and openapi-spec rulesets since 22 Nov 2026, Jessica's decision). A ruleset switched to `evaluate` (rollback, below) only logs what it would block (Insights, below).
 
 | Ruleset | Enforcement (20 Nov 2026) | Scope | Required checks | Bypass |
 | --- | --- | --- | --- | --- |
-| Org `main: PR + security checks (LG-1225)`, id 27457270 | evaluate (pending Jessica's decision; active 19 Nov, then back to evaluate) | `lovablegarden-*` except openapi-spec (12 services, security-common, system) | `security / Secrets (gitleaks)`, `security / Dependencies and IaC (Trivy)` | Org admins, by merging a PR only |
+| Org `main: PR + security checks (LG-1225)`, id 27457270 | **active** (22 Nov 2026) | `lovablegarden-*` except openapi-spec (12 services, security-common, system) | `security / Secrets (gitleaks)`, `security / Dependencies and IaC (Trivy)` | Org admins, by merging a PR only |
 | Repo `main: PR + checks (LG-1225)`, lovablegarden (frontend), id 27639591 | **active** | frontend | the same two plus `ci-cd / build` | Lovable app (818760), lovablegarden-bot (4124938) |
-| Repo `main: PR + checks (LG-1225)`, lovablegarden-openapi-spec, id 27639593 | evaluate (pending Jessica's decision) | openapi-spec | the same two plus `build` | lovablegarden-bot |
+| Repo `main: PR + checks (LG-1225)`, lovablegarden-openapi-spec, id 27639593 | **active** (22 Nov 2026) | openapi-spec | the same two plus `build` | lovablegarden-bot |
 | Repo `main: PR + CodeQL (LG-1225)`, .github, id 27639620 | **active** | this repo (it has no gitleaks/Trivy job on PRs) | `Analyze (actions)` (CodeQL default setup) | none |
 
 How the automation lives with them:
 
-- **Bot release and bump PRs** (gated release in the services and security-common, `bot-pr-auto-merge.yml` in system) merge only when their own required-check list, which includes the two security checks, is green. They re-run when Security Scan finishes. Where the ruleset is active, a merge made earlier would be refused.
-- **Renovate** uses `automergeType: pr` with platform auto-merge, so GitHub waits for the required checks where the ruleset is active.
+- **Bot release and bump PRs** (gated release in the services and security-common, `bot-pr-auto-merge.yml` in system) merge only when their own required-check list, which includes the two security checks, is green. They re-run when Security Scan finishes. A merge made earlier would be refused.
+- **Renovate** uses `automergeType: pr` with platform auto-merge, so GitHub waits for the required checks.
 - **Version-bump pushes** (openapi-spec `release.yml`, frontend `frontend-release.yml`) push with a lovablegarden-bot app token, because the bot is a bypass actor. A `GITHUB_TOKEN` push can't bypass a ruleset (GitHub doesn't accept the built-in Actions app as a bypass actor). Those commits carry `[skip ci]`, because unlike `GITHUB_TOKEN` pushes, an app-token push triggers workflows.
 - When you add a required check, add it to the caller's `required-checks` list (services, security-common) or to `scripts/ci/checks-green.sh` (system) in the same change, or bot merges stop.
 
