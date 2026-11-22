@@ -15,3 +15,5 @@ Please give us a reasonable time to fix the issue before you disclose it, and do
 ## How we handle findings
 
 Findings, from reports and from our own scanners, are tracked privately with remediation targets by severity (known exploited: 3 days, critical: 7 days, high: 30 days). See [docs/security/cve-policy.md](docs/security/cve-policy.md).
+
+For ordinary bugs (not security problems), see [docs/bugs.md](docs/bugs.md): Jira is the bug record, GitHub issues are intake.

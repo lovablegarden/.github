@@ -15,6 +15,26 @@ Triage creates Jira issues through an Atlassian service account (org secrets `JI
 
 Every live triage run first checks that the service account can read the project (`GET /rest/api/3/project/LG`). If that fails, the triage job fails with "Jira check failed", even on a night with nothing to file. The usual cause is an expired or re-issued token. Fix: create a new API token for the service account (scopes `read:jira-work`, `write:jira-work`), set it as the org secret `JIRA_API_TOKEN`, check that `JIRA_USER_EMAIL` is the service account's own `…@serviceaccount.atlassian.com` address, and confirm the account has Browse, Create, Edit and Add comments on LG. Then re-run one repo's Security Scan by dispatch.
 
+## Required checks on `main` (rulesets)
+
+Every active repo's `main` has a ruleset (LG-1225). Each one blocks deletion and force-push, requires a PR (0 approvals), and requires the checks below from GitHub Actions. All four are `active` (the org and openapi-spec rulesets since 22 Nov 2026, Jessica's decision). A ruleset switched to `evaluate` (rollback, below) only logs what it would block (Insights, below).
+
+| Ruleset | Enforcement (20 Nov 2026) | Scope | Required checks | Bypass |
+| --- | --- | --- | --- | --- |
+| Org `main: PR + security checks (LG-1225)`, id 27457270 | **active** (22 Nov 2026) | `lovablegarden-*` except openapi-spec (12 services, security-common, system) | `security / Secrets (gitleaks)`, `security / Dependencies and IaC (Trivy)` | Org admins, by merging a PR only |
+| Repo `main: PR + checks (LG-1225)`, lovablegarden (frontend), id 27639591 | **active** | frontend | the same two plus `ci-cd / build` | Lovable app (818760), lovablegarden-bot (4124938) |
+| Repo `main: PR + checks (LG-1225)`, lovablegarden-openapi-spec, id 27639593 | **active** (22 Nov 2026) | openapi-spec | the same two plus `build` | lovablegarden-bot |
+| Repo `main: PR + CodeQL (LG-1225)`, .github, id 27639620 | **active** | this repo (it has no gitleaks/Trivy job on PRs) | `Analyze (actions)` (CodeQL default setup) | none |
+
+How the automation lives with them:
+
+- **Bot release and bump PRs** (gated release in the services and security-common, `bot-pr-auto-merge.yml` in system) merge only when their own required-check list, which includes the two security checks, is green. They re-run when Security Scan finishes. A merge made earlier would be refused.
+- **Renovate** uses `automergeType: pr` with platform auto-merge, so GitHub waits for the required checks.
+- **Version-bump pushes** (openapi-spec `release.yml`, frontend `frontend-release.yml`) push with a lovablegarden-bot app token, because the bot is a bypass actor. A `GITHUB_TOKEN` push can't bypass a ruleset (GitHub doesn't accept the built-in Actions app as a bypass actor). Those commits carry `[skip ci]`, because unlike `GITHUB_TOKEN` pushes, an app-token push triggers workflows.
+- When you add a required check, add it to the caller's `required-checks` list (services, security-common) or to `scripts/ci/checks-green.sh` (system) in the same change, or bot merges stop.
+
+Read the evaluations under Org settings → Rules → Insights (API: `gh api "orgs/lovablegarden/rulesets/rule-suites?ruleset_id=<id>&time_period=day"`; repo rulesets: `repos/lovablegarden/<repo>/rulesets/rule-suites`).
+
 ## What runs when
 
 | When | What | Where |
@@ -45,6 +65,7 @@ Each control can be switched off on its own, without touching the others. Every 
 | Renovate | Set the variable `RENOVATE_ENABLED` to `false` here (stops the schedule); close its PRs. Per repo: remove the repo from `RENOVATE_REPOSITORIES` | No dependency PRs |
 | Provenance gate blocks a needed release | One-off `provenance-exception` (above). To roll the gate back org-wide, revert the provenance job in the caller | Release ships with the exception recorded |
 | A bad change to a reusable workflow | Revert the PR here: callers use `@main`, so the revert applies to the next run everywhere | All repos back on the previous behaviour |
+| A ruleset blocks a needed change (a check is broken everywhere, an automation can't merge) | Fix forward if you can. Otherwise switch that ruleset to `evaluate`: `env -u GITHUB_TOKEN gh api -X PUT orgs/lovablegarden/rulesets/27457270 -f enforcement=evaluate` (repo rulesets: `repos/lovablegarden/<repo>/rulesets/<id>`). Needs `admin:org` (Jessica). Switch it back to `active` afterwards | Pushes are logged in Insights but not blocked |
 | A bad release image | Do not re-tag. Deploy the previous system version (its lock pins attested digests), then fix forward with a new version | Stage/prod back on the last good digests |
 
 ## Evidence

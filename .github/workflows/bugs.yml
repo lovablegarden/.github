@@ -1,0 +1,33 @@
+name: Bugs
+
+# This repo's own bug intake caller (LG-1221). .github is the public repo, and its issue forms
+# are the default for every org repo without its own.
+on:
+  issues:
+    types: [labeled]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'GitHub issue number (empty = sync only)'
+        required: false
+      jira-key:
+        description: 'Existing Jira issue to link (empty = create or reuse)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  bugs:
+    if: github.event_name != 'issues' || github.event.label.name == 'bug:accepted'
+    uses: ./.github/workflows/bug-intake.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      issue: ${{ github.event.issue.number || inputs.issue || '' }}
+      jira-key: ${{ inputs.jira-key || '' }}
+      tooling-ref: ${{ github.sha }}
+    secrets: inherit

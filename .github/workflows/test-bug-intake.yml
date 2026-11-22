@@ -1,0 +1,38 @@
+name: Test bug intake
+
+# Proves scripts/bugs/jira-bug-intake.sh (LG-1221) against a fake Jira and gh: one Jira Bug per
+# accepted issue, linking an existing one, no duplicate comments, and closing only on Jira Done.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/bug-intake.yml'
+      - '.github/workflows/test-bug-intake.yml'
+      - 'scripts/bugs/**'
+      - 'tests/bug-intake/**'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/bugs/**'
+      - 'tests/bug-intake/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run tests
+        run: bash tests/bug-intake/run-tests.sh
+      - name: Dry run without Jira settings
+        env:
+          REPO: lovablegarden/.github
+          ISSUE_NUMBER: '1'
+          ISSUE_TITLE: dry run
+          ISSUE_URL: https://github.com/lovablegarden/.github/issues/1
+        run: bash scripts/bugs/jira-bug-intake.sh link | grep -q 'Dry run'

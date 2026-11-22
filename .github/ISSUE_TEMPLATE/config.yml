@@ -1,0 +1,9 @@
+# LG-1221: bug reports go through the form; security reports never go into public issues.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/lovablegarden/.github/security/advisories/new
+    about: Report privately. Please don't open a public issue for a security problem (see SECURITY.md).
+  - name: How bugs are handled
+    url: https://github.com/lovablegarden/.github/blob/main/docs/bugs.md
+    about: Jira is the bug record. What happens after you report, and how long it takes.

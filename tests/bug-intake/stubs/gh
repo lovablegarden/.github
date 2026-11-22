@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Fake gh for tests/bug-intake/run-tests.sh. Records calls; issue list comes from $FIX/gh-open.json.
+echo "gh $*" >> "$FIX/gh-calls.log"
+case "$1 $2" in
+  "issue view") echo "${GH_COMMENTS:-}" ;;
+  "issue list") jq -r '.[] | [.number, ([.labels[].name | select(startswith("jira:"))][0] // "")] | @tsv' "$FIX/gh-open.json" ;;
+  *) : ;;
+esac
