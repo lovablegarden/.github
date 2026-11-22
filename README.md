@@ -8,7 +8,7 @@ This repository contains centralized, reusable GitHub Actions workflows for vari
 | --- | --- | --- |
 | `security-scan.yml` | Secrets, dependencies, IaC, image and SAST scans; dated risk acceptances; lifecycle checks; nightly Jira triage | [adopting](docs/security/adopting.md#1-security-scan), [CVE policy](docs/security/cve-policy.md) |
 | `release-provenance.yml` | SBOM, provenance and signed attestations for each release; final-image gate before the system-lock bump | [adopting](docs/security/adopting.md#2-release-provenance), [SBOM and provenance](docs/security/sbom-provenance.md) |
-| `default.json` | Shared Renovate preset: Actions pinned by SHA, base images by digest | [renovate](docs/renovate.md), [lifecycle](docs/security/lifecycle.md) |
+| `default.json` | Shared Renovate preset: Actions pinned by SHA, base images by digest | [renovate](docs/renovate.md), [lifecycle](docs/security/lifecycle.md), [Node and frontend](docs/security/node-frontend.md) |
 | `SECURITY.md` | Org-wide vulnerability reporting policy | |
 
 ## 📁 Workflow inventory
@@ -28,7 +28,7 @@ Reusable workflows are called at `@main` as `lovablegarden/.github/.github/workf
 | `consumer-bump-bom-version.yml` | security-common `release-published.yml` | Bump `lovablegardenBomVersion` in services |
 | `prune-ghcr-package.yml`, `prune-maven-package.yml` | `package-retention.yml`, release workflows, `package-retention-scheduled.yml` | Package retention (keeps attested images, LG-1471) |
 | `security-scan.yml` | `security-scan.yml` in every active repo and the frontend | See the security table above |
-| `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image). The job runs `<lint-command> --max-warnings <max-warnings>` (default 600), so `lint-command` must take ESLint flags directly: `npx eslint …`, or an `npm run` script ending in ` --`. |
+| `frontend-release.yml` | frontend `release.yml` | Frontend GitHub Release (archives, no image). Node from the caller's `.nvmrc` unless `node-version` is passed (LG-1223). The job runs `<lint-command> --max-warnings <max-warnings>` (default 600), so `lint-command` must take ESLint flags directly: `npx eslint …`, or an `npm run` script ending in ` --`. |
 | `renovate.yml`, `*-scheduled.yml`, `test-*.yml` | this repo | Renovate runner, scheduled jobs, tests of the reusables |
 
 ### Release path (services)

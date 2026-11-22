@@ -1,6 +1,6 @@
 # Container, base-image and GitHub Actions lifecycle (LG-1224)
 
-Application dependencies are covered by Renovate ([renovate.md](../renovate.md)) and the security scan. This page covers the rest of the supply chain: base images, the runtime in them, and the Actions that build them.
+Application dependencies are covered by Renovate ([renovate.md](../renovate.md)) and the security scan. Node.js and npm dependencies have their own policy: [node-frontend.md](node-frontend.md). This page covers the rest of the supply chain: base images, the runtime in them, and the Actions that build them.
 
 ## Policy
 
