@@ -12,6 +12,8 @@ WORKFLOW="$HERE/../../.github/workflows/prune-maven-package.yml"
 BOM=com.lovablegarden.lovablegarden-bom
 PLANTS=se.lovablegarden.api.lovablegarden-api-plants
 SECURITY=com.lovablegarden.security.lovablegarden-security-common
+BOM4=com.lovablegarden.lovablegarden-bom-boot4
+SECURITY4=com.lovablegarden.security.lovablegarden-security-common-boot4
 
 SCRIPT=$(mktemp)
 # The step's run block is the last block in the file, indented 10 spaces
@@ -37,9 +39,11 @@ versions() {
 }
 
 # pom <bom version> <groupId:artifactId:version>... -> BOM POM fixture
+# (POM_DIR=lovablegarden-bom-boot4 writes a Boot 4 BOM POM)
 pom() {
-  local v=$1 dep g a ver
+  local v=$1 dep g a ver dir="$FIX/poms${POM_DIR:+/$POM_DIR}"
   shift
+  mkdir -p "$dir"
   {
     echo '<?xml version="1.0" encoding="UTF-8"?>'
     echo '<project xmlns="http://maven.apache.org/POM/4.0.0">'
@@ -51,7 +55,17 @@ pom() {
     done
     echo '  </dependencies></dependencyManagement>'
     echo '</project>'
-  } > "$FIX/poms/$v.pom"
+  } > "$dir/$v.pom"
+}
+pom4() { POM_DIR=lovablegarden-bom-boot4 pom "$@"; }
+
+# BOM releases are never pruned (LG-1550), so the BOM consumer scan only runs when
+# the BOM has a snapshot to prune: add an unused one.
+bom_snapshot() {
+  ID=$((ID + 1))
+  jq -c --argjson id "$ID" '. + [{id: $id, name: "1.1.0-SNAPSHOT", created_at: "2026-10-26T00:00:00Z"}]' \
+    "$FIX/versions/$BOM.json" > "$FIX/versions/$BOM.tmp" && mv "$FIX/versions/$BOM.tmp" "$FIX/versions/$BOM.json"
+  pom 1.1.0-SNAPSHOT "com.lovablegarden.security:lovablegarden-security-common:1.1.0-SNAPSHOT"
 }
 
 # src <repo> <path> -> writes stdin to a build file in that repo's default branch
@@ -95,6 +109,18 @@ baseline() {
     1.1.0-SNAPSHOT@2026-10-26T00:00:00Z 1.0.5@2026-10-24T18:00:00Z 1.0.4@2026-07-18T16:15:16Z \
     1.0.3@2026-07-18T16:08:28Z 1.0.2@2026-07-07T14:46:23Z 1.0.1@2026-07-01T10:00:00Z \
     1.0.0@2026-06-01T00:00:00Z
+
+  # Boot 4 line (LG-1550): each bom-boot4 release pins the -boot4 library of the same version
+  versions "$BOM4" \
+    1.0.5@2026-10-24T18:00:01Z 1.0.4@2026-07-18T16:15:17Z 1.0.3@2026-07-18T16:08:29Z \
+    1.0.2@2026-07-07T14:46:24Z
+  for v in 1.0.2 1.0.3 1.0.4 1.0.5; do
+    pom4 "$v" "com.lovablegarden.security:lovablegarden-security-common-boot4:$v" \
+      "se.lovablegarden.api:lovablegarden-api-plants:4.0.0"
+  done
+  versions "$SECURITY4" \
+    1.0.5@2026-10-24T18:00:01Z 1.0.4@2026-07-18T16:15:17Z 1.0.3@2026-07-18T16:08:29Z \
+    1.0.2@2026-07-07T14:46:24Z 1.0.1@2026-07-01T10:00:01Z
 
   jq -n '[
     {name: "lovablegarden-plants", archived: false},
@@ -182,15 +208,72 @@ check 'KEEP 1.0.0' keeps 1.0.0
 check 'KEEP 1.1.0-SNAPSHOT' keeps 1.1.0-SNAPSHOT
 check 'nothing deleted' deleted_ids ''
 
-CASE='bom: versions used by consumers are kept'
+CASE='bom: every release is kept, nothing to prune (LG-1550)'
 baseline
 run "$BOM"
 check 'exit 0' rc 0
-for v in 1.0.5 1.0.4 1.0.3 1.0.1; do check "KEEP $v" keeps "$v"; done
-check 'DELETE 1.0.2' deletes 1.0.2
-check 'only 1.0.2 deleted' deleted_ids "$(id_of "$BOM" 1.0.2)"
-check 'consumer reason logged' has "  1.0.1 used by lovablegarden-plants"
+check 'nothing to prune' has 'Nothing to prune (keep limit 3, protect: none)'
+check 'nothing deleted' deleted_ids ''
+check 'BOM rule logged' has "$BOM is a BOM: every release is kept, only -SNAPSHOT versions can be pruned"
 check 'non-semver name untouched' bash -c '! grep -q "x-release-please" <<< "$0"' "$OUT"
+
+CASE='bom: an unused snapshot goes, a used one stays, releases stay'
+baseline
+versions "$BOM" 1.0.5@2026-10-24T18:00:00Z 1.0.4@2026-07-18T16:15:16Z 1.0.2@2026-07-07T14:46:23Z \
+  1.0.1@2026-07-01T10:00:00Z 1.1.0-SNAPSHOT@2026-10-26T00:00:00Z 1.0.9-SNAPSHOT@2026-10-25T00:00:00Z
+pom 1.1.0-SNAPSHOT "com.lovablegarden.security:lovablegarden-security-common:1.1.0-SNAPSHOT"
+pom 1.0.9-SNAPSHOT "com.lovablegarden.security:lovablegarden-security-common:1.0.9-SNAPSHOT"
+printf 'lovablegardenBomVersion=1.0.9-SNAPSHOT\n' > "$FIX/props/lovablegarden-audit"
+run "$BOM"
+check 'exit 0' rc 0
+for v in 1.0.5 1.0.4 1.0.2 1.0.1 1.0.9-SNAPSHOT; do check "KEEP $v" keeps "$v"; done
+check 'consumer reason logged' has "  1.0.1 used by lovablegarden-plants"
+check 'only 1.1.0-SNAPSHOT deleted' deleted_ids "$(id_of "$BOM" 1.1.0-SNAPSHOT)"
+
+CASE='bom-boot4: every release is kept, beyond keep_count too (LG-1550)'
+baseline
+run "$BOM4"
+check 'exit 0' rc 0
+check 'nothing to prune' has 'Nothing to prune (keep limit 3, protect: none)'
+check 'nothing deleted' deleted_ids ''
+
+CASE='bom: with a snapshot to prune, every release still gets KEEP'
+baseline
+bom_snapshot
+run "$BOM"
+check 'exit 0' rc 0
+for v in 1.0.5 1.0.4 1.0.3 1.0.2 1.0.1; do check "KEEP $v" keeps "$v"; done
+check 'only the snapshot deleted' deleted_ids "$(id_of "$BOM" 1.1.0-SNAPSHOT)"
+
+CASE='bom-boot4: a release survives the dry run and a real run alike'
+baseline
+run "$BOM4" true
+check 'exit 0' rc 0
+check 'no DELETE line' bash -c '! grep -q "^DELETE" <<< "$0"' "$OUT"
+
+CASE='security-common-boot4: versions a bom-boot4 release pins are kept (LG-1550)'
+baseline
+run "$SECURITY4"
+check 'exit 0' rc 0
+for v in 1.0.5 1.0.4 1.0.3 1.0.2; do check "KEEP $v" keeps "$v"; done
+check 'reason logged' has "  1.0.2 pinned by lovablegarden-bom-boot4 1.0.2"
+check 'DELETE 1.0.1' deletes 1.0.1
+check 'only 1.0.1 deleted' deleted_ids "$(id_of "$SECURITY4" 1.0.1)"
+
+CASE='fail closed: bom-boot4 POM HTTP 500'
+baseline
+touch "$FIX/poms/lovablegarden-bom-boot4/1.0.3.500"
+run "$SECURITY4"
+check 'exit 1' rc 1
+check 'reason logged' has '::error::lovablegarden-bom-boot4 1.0.3 POM returned HTTP 500'
+check 'nothing deleted' deleted_ids ''
+
+CASE='fail closed: no bom-boot4 versions listed'
+baseline
+echo '[]' > "$FIX/versions/$BOM4.json"
+run "$SECURITY4"
+check 'exit 1' rc 1
+check 'nothing deleted' deleted_ids ''
 
 CASE='nothing to prune: guard skipped'
 baseline
@@ -252,6 +335,7 @@ check 'nothing deleted' deleted_ids ''
 
 CASE='fail closed: consumer gradle.properties HTTP 500'
 baseline
+bom_snapshot
 touch "$FIX/props/lovablegarden-tasks.fail"
 run "$BOM"
 check 'exit 1' rc 1
@@ -259,6 +343,7 @@ check 'nothing deleted' deleted_ids ''
 
 CASE='fail closed: consumer BOM version is not a plain version'
 baseline
+bom_snapshot
 printf 'lovablegardenBomVersion=${bom}\n' > "$FIX/props/lovablegarden-tasks"
 run "$BOM"
 check 'exit 1' rc 1
@@ -281,6 +366,7 @@ check 'nothing deleted' deleted_ids ''
 
 CASE='fail closed: consumer repo not readable with GH_PACKAGES_TOKEN'
 baseline
+bom_snapshot
 touch "$FIX/props/lovablegarden-tasks.noaccess"
 run "$BOM"
 check 'exit 1' rc 1
@@ -289,6 +375,7 @@ check 'nothing deleted' deleted_ids ''
 
 CASE='bom: empty repo is skipped'
 baseline
+bom_snapshot
 touch "$FIX/props/lovablegarden-auth.empty"
 run "$BOM"
 check 'exit 0' rc 0
