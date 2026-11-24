@@ -18,7 +18,7 @@ on:
         type: boolean
         default: true
       protect_versions:
-        description: 'Comma-separated extra versions to never delete (e.g. current release)'
+        description: 'Comma-separated extra versions to never delete (e.g. current release). A release tag (v1.2.3 or <component>-v1.2.3) is reduced to its version'
         required: false
         type: string
         default: ''
@@ -155,7 +155,10 @@ jobs:
             '
           }
 
-          INPUT_PROTECT=$(echo "$PROTECT_VERSIONS" | tr ',' '\n' | sed 's/[[:space:]]//g; s/^v//' \
+          # Release tags arrive as given: v1.2.3 or the release-please form <component>-v1.2.3 (security-common
+          # passes github.event.release.tag_name). Reduce both to the bare version so they match a package version.
+          INPUT_PROTECT=$(echo "$PROTECT_VERSIONS" | tr ',' '\n' \
+            | sed 's/[[:space:]]//g; s/^[A-Za-z][A-Za-z0-9_.-]*-v\([0-9]\)/\1/; s/^v//' \
             | jq -R -s -c 'split("\n") | map(select(length > 0))')
 
           CANDIDATES=$(echo "$SORTED" | jq -c --argjson keep "$(keep_ids "$INPUT_PROTECT")" '
