@@ -208,6 +208,22 @@ check 'KEEP 1.0.0' keeps 1.0.0
 check 'KEEP 1.1.0-SNAPSHOT' keeps 1.1.0-SNAPSHOT
 check 'nothing deleted' deleted_ids ''
 
+CASE='client: protect_versions given as a release-please tag matches the version'
+baseline
+run "$SECURITY" false 'lovablegarden-security-common-v1.0.0'
+check 'exit 0' rc 0
+check 'KEEP 1.0.0' keeps 1.0.0
+check 'tag reduced to the version' has "  1.0.0 protect_versions input"
+check 'only 1.1.0-SNAPSHOT deleted' deleted_ids "$(id_of "$SECURITY" 1.1.0-SNAPSHOT)"
+
+CASE='client: a version with -v in it is not cut'
+baseline
+versions "$SECURITY" 1.0.5@2026-10-24T18:00:00Z 1.0.4@2026-07-18T16:15:16Z 1.0.3@2026-07-18T16:08:28Z \
+  1.0.2@2026-07-07T14:46:23Z 1.0.1@2026-07-01T10:00:00Z 1.0.0-v2@2026-06-01T00:00:00Z
+run "$SECURITY" false '1.0.0-v2'
+check 'exit 0' rc 0
+check 'KEEP 1.0.0-v2' keeps 1.0.0-v2
+
 CASE='bom: every release is kept, nothing to prune (LG-1550)'
 baseline
 run "$BOM"
