@@ -38,6 +38,8 @@ If the SBOM is still empty (no lock file, no `runtimeClasspath`), the job fails 
 - the SBOM couldn't be generated or lists no components, or a container SBOM has no operating-system component, or
 - the final image has fixable findings at or above `severity-threshold` (default CRITICAL) that the repo's `.trivyignore` doesn't accept ([risk acceptance](cve-policy.md#risk-acceptance)).
 
+Fixable findings at or above `report-threshold` (default HIGH) that `.trivyignore` doesn't accept are reported, not gated (LG-1562): each run warns with the count and the first 20 rows, lists them in the job summary, and records `report_threshold` and `fixable_at_or_above_report_threshold` in `provenance.json`. Accept a known HIGH with a dated `.trivyignore` line to silence it.
+
 The caller runs the system-lock bump only after this job (`needs: [publish-docker, provenance]`), so a failed run keeps the release out of `lovablegarden-system` and away from stage and prod.
 
 **Exception:** re-run the release workflow by hand with the `provenance-exception` input set to the Jira key that records the approved exception. The failures become warnings, and the key is written into `provenance.json` (`"exception": "LG-…"`), so the release stays traceable as an exception.
@@ -59,7 +61,8 @@ The caller runs the system-lock bump only after this job (`needs: [publish-docke
   "sbom": {"file": "sbom-lovablegarden-tasks-1.1.30.cdx.json", "format": "CycloneDX", "generator": "trivy 0.76.1",
            "status": "success", "sha256": "…", "components": 312, "dev_dependencies": false},
   "scan": {"tool": "trivy 0.76.1", "db_updated": "…", "status": "success", "threshold": "CRITICAL",
-           "fixable_at_or_above_threshold": 0, "accepted_risks": ["CVE-2099-0001"]},
+           "fixable_at_or_above_threshold": 0,
+           "report_threshold": "HIGH", "fixable_at_or_above_report_threshold": 0, "accepted_risks": ["CVE-2099-0001"]},
   "exception": null,
   "dry_run": false,
   "generated_at": "2026-11-16T12:00:00Z"
